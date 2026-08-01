@@ -1,6 +1,6 @@
 {
-  "name": "react-native-css",
-  "version": "3.0.7",
+  "name": "@scatterlab/react-native-css",
+  "version": "3.0.7-zeta.1",
   "description": "Use CSS stylesheets in React Native",
   "exports": {
     ".": {
@@ -177,7 +177,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nativewind/react-native-css.git"
+    "url": "git+https://github.com/scatterlab/react-native-css.git"
   },
   "author": "Mark Lawlor <mwlawlor@gmail.com> (https://github.com/marklawlor)",
   "license": "MIT",
@@ -186,7 +186,7 @@
   },
   "homepage": "https://github.com/nativewind/react-native-css#readme",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://npm.pkg.github.com"
   },
   "files": [
     "src",

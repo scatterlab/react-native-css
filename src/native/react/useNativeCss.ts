@@ -16,6 +16,8 @@ import { testGuards, type RenderGuard } from "../conditions/guards";
 import {
   cleanupEffect,
   ContainerContext,
+  flushContainerAttributes,
+  setContainerAttributes,
   type ContainerContextValue,
   type Effect,
   type Getter,
@@ -112,8 +114,23 @@ export function useNativeCss(
     );
   });
 
+  // The snapshot `group-<attribute>:` reads. It has to be written on every render: inside
+  // `updateRules` it would be skipped by the guards on a container whose own rules don't use the
+  // prop, leaving a stale snapshot behind.
+  if (state.containers) {
+    setContainerAttributes(state.ruleEffectGetter, originalProps ?? undefined);
+  }
+
   // Both effects share the same observers, so we only need to cleanup one of them
   useEffect(() => () => cleanupEffect(state.ruleEffect), [state.ruleEffect]);
+
+  // Waking the subscribers has to wait for commit, unlike writing the snapshot: running those
+  // effects sets state on components other than the one rendering.
+  useEffect(() => {
+    if (state.containers) {
+      flushContainerAttributes(state.ruleEffectGetter);
+    }
+  });
 
   // Check if our derived state has changed (e.g the className prop)
   if (

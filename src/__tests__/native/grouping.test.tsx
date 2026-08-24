@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react-native";
+import { Pressable } from "react-native-css/components/Pressable";
 import { View } from "react-native-css/components/View";
 import { registerCSS } from "react-native-css/jest";
 
@@ -121,4 +122,32 @@ test("group selector", () => {
   );
 
   expect(child.props.style).toStrictEqual(undefined);
+});
+
+test("group - disabled attribute", () => {
+  registerCSS(
+    `.group\\/item:disabled .my-class {
+      color: red;
+    }`,
+  );
+
+  render(
+    <Pressable testID={parentID} className="group/item" disabled>
+      <View testID={childID} className="my-class" />
+    </Pressable>,
+  );
+
+  expect(screen.getByTestId(childID).props.style).toStrictEqual({
+    color: "#f00",
+  });
+
+  // The child is not re-rendered by React here — its own props are unchanged — so this only
+  // passes if the container publishes the attribute change to its subscribers.
+  screen.rerender(
+    <Pressable testID={parentID} className="group/item">
+      <View testID={childID} className="my-class" />
+    </Pressable>,
+  );
+
+  expect(screen.getByTestId(childID).props.style).toStrictEqual(undefined);
 });

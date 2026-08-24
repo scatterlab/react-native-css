@@ -13,10 +13,12 @@ import {
   containerWidthFamily,
   focusFamily,
   hoverFamily,
+  containerAttributesFamily,
+  getContainerAttributes,
   type ContainerContextValue,
   type Getter,
 } from "../reactivity";
-// import { testAttributes } from "./attributes";
+import { testAttributes } from "./attributes";
 import type { RenderGuard } from "./guards";
 
 export const DEFAULT_CONTAINER_NAME = "c:___default___";
@@ -48,19 +50,15 @@ export function testContainerQuery(
   }
 
   if (query.a) {
-    // zeta: the container value is an effect getter and carries no props (see
-    // `containers[name] = state.ruleEffectGetter` in react/rules.ts), which is why upstream
-    // commented out the attribute test above. The side effect is that a `group-<attribute>:`
-    // rule becomes **unconditionally true whenever a container exists** — every enabled
-    // Button renders its label with `group-disabled:text-white/20`. A condition we cannot
-    // evaluate must not be applied.
-    //
-    // Consequence: `group-disabled:*` never applies on native. Pseudo conditions
-    // (`group-active:`, `group-hover:`) go through the query.p path below and are unaffected.
-    // The real fix is to also carry props on `containers[name]` so testAttributes works, but
-    // the container key doubles as the identity for the hover/active reactivity signals, so
-    // that touches the reactivity design.
-    return false;
+    // The value is read straight from the container's snapshot; this subscription is what makes
+    // a later change to it reach us (see the reactivity module for why the two are split).
+    get(containerAttributesFamily(container));
+
+    // Guards go into a throwaway array on purpose: `testGuards` compares an "a" guard against
+    // *this* component's props, so mixing the container's attributes in would invert it.
+    if (!testAttributes(query.a, getContainerAttributes(container), [])) {
+      return false;
+    }
   }
 
   if (query.m && !testContainerMediaCondition(query.m, container, get)) {

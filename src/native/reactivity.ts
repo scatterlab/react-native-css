@@ -241,6 +241,96 @@ export const containerWidthFamily = weakFamily((key) => {
   });
 });
 
+/**
+ * Attributes (=props) of the component acting as a container, so `group-<attribute>:` rules can
+ * be evaluated. Two pieces, because the value and the notification have to happen at different
+ * times:
+ *
+ * - the value is written during the container's render (a plain WeakMap, no notification), so a
+ *   child reading it while rendering right after its parent already sees the current props;
+ * - the notification is a version bump flushed after commit, because subscribers re-run by
+ *   setting state on components other than the one rendering.
+ *
+ * Only attribute-testable values participate in the change check. Object and function props get
+ * a new identity on every render (`style`, inline handlers), and treating those as changes would
+ * notify on every commit; `children` is compared by presence because that is all `:empty` asks.
+ */
+const containerAttributes = new WeakMap<
+  WeakKey,
+  Record<string, unknown> | undefined
+>();
+const publishedContainerAttributes = new WeakMap<
+  WeakKey,
+  Record<string, unknown> | undefined
+>();
+
+export const containerAttributesFamily = weakFamily(() => observable(0));
+
+function isAttributeTestable(value: unknown) {
+  const type = typeof value;
+  return type !== "object" && type !== "function";
+}
+
+function sameContainerAttributes(
+  previous: Record<string, unknown> | undefined,
+  next: Record<string, unknown> | undefined,
+) {
+  if (previous === next) {
+    return true;
+  }
+
+  const keys = new Set([
+    ...Object.keys(previous ?? {}),
+    ...Object.keys(next ?? {}),
+  ]);
+
+  for (const key of keys) {
+    const previousValue = previous?.[key];
+    const nextValue = next?.[key];
+
+    if (key === "children") {
+      if (Boolean(previousValue) !== Boolean(nextValue)) {
+        return false;
+      }
+      continue;
+    }
+
+    if (!isAttributeTestable(previousValue) && !isAttributeTestable(nextValue)) {
+      continue;
+    }
+
+    if (!Object.is(previousValue, nextValue)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function setContainerAttributes(
+  key: WeakKey,
+  props: Record<string, unknown> | undefined,
+) {
+  containerAttributes.set(key, props);
+}
+
+export function getContainerAttributes(key: WeakKey) {
+  return containerAttributes.get(key);
+}
+
+export function flushContainerAttributes(key: WeakKey) {
+  const next = containerAttributes.get(key);
+
+  if (sameContainerAttributes(publishedContainerAttributes.get(key), next)) {
+    return;
+  }
+
+  publishedContainerAttributes.set(key, next);
+
+  const version = containerAttributesFamily(key);
+  version.set(version.get() + 1);
+}
+
 export const containerHeightFamily = weakFamily((key) => {
   return observable((read) => {
     return read(containerLayoutFamily(key))?.width || 0;

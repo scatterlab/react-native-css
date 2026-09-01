@@ -416,10 +416,16 @@ function deepMergeConfig(
   // Handle style merging to support both className and inline style props
   let result: Record<string, any>;
   if (config.target) {
+    // `mappingToConfig` collapses a length-1 target to a bare string, so the object-form
+    // mappings (TextInput, ActivityIndicator, ImageBackground, KeyboardAvoidingView) and the
+    // default config arrive here as `"style"`, not `["style"]`. They need the same merge as
+    // the shorthand form — otherwise `mergeDefinedProps` lets the inline style prop replace
+    // the className-computed style outright.
     if (
-      Array.isArray(config.target) &&
-      config.target.length === 1 &&
-      config.target[0] === "style"
+      config.target === "style" ||
+      (Array.isArray(config.target) &&
+        config.target.length === 1 &&
+        config.target[0] === "style")
     ) {
       // Special handling for style target when we have inline styles
       result = { ...left, ...right };

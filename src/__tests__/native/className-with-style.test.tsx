@@ -1,10 +1,11 @@
-import { View as RNView } from "react-native";
+import { View as RNView, StyleSheet } from "react-native";
 
 import { render } from "@testing-library/react-native";
 import { copyComponentProperties } from "react-native-css/components/copyComponentProperties";
 import { FlatList } from "react-native-css/components/FlatList";
 import { ScrollView } from "react-native-css/components/ScrollView";
 import { Text } from "react-native-css/components/Text";
+import { TextInput } from "react-native-css/components/TextInput";
 import { View } from "react-native-css/components/View";
 import { registerCSS, testID } from "react-native-css/jest";
 import {
@@ -528,5 +529,58 @@ describe("multi-config: inline style should not destroy className styles on othe
       { backgroundColor: "#00f" },
       { height: 200 },
     ]);
+  });
+});
+
+describe("string target (TextInput, ActivityIndicator, ...)", () => {
+  test("inline style whose values are all undefined must not drop className styles", () => {
+    registerCSS(`.body1 { font-size: 15px; color: #E5E7EB; }`);
+
+    const component = render(
+      <TextInput
+        testID={testID}
+        className="body1"
+        style={{ lineHeight: undefined }}
+      />,
+    ).getByTestId(testID);
+
+    expect(component.props.style).toStrictEqual({
+      fontSize: 15,
+      color: "#e5e7eb",
+    });
+  });
+
+  test("inline style with a defined value still merges as an array", () => {
+    registerCSS(`.body1 { font-size: 15px; color: #E5E7EB; }`);
+
+    const component = render(
+      <TextInput
+        testID={testID}
+        className="body1"
+        style={{ maxHeight: 100 }}
+      />,
+    ).getByTestId(testID);
+
+    expect(component.props.style).toStrictEqual([
+      { fontSize: 15, color: "#e5e7eb" },
+      { maxHeight: 100 },
+    ]);
+  });
+
+  test("inline style overriding the same property still wins", () => {
+    registerCSS(`.body1 { font-size: 15px; color: #E5E7EB; }`);
+
+    const component = render(
+      <TextInput
+        testID={testID}
+        className="body1"
+        style={{ fontSize: 20, color: "blue" }}
+      />,
+    ).getByTestId(testID);
+
+    expect(StyleSheet.flatten(component.props.style)).toStrictEqual({
+      fontSize: 20,
+      color: "blue",
+    });
   });
 });

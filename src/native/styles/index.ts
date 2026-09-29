@@ -97,6 +97,8 @@ function flattenStyleArray(styleArray: any[]): any {
  * - Objects: recursively filters properties, returns `undefined` if no properties remain
  * - Primitives (null, undefined, numbers, strings, booleans): returned as-is
  * - Symbol properties: intentionally filtered out for React Native compatibility
+ * - Values with nothing to filter are returned as-is, not copied. Reanimated identifies an
+ *   animated style handle by reference and keeps members on it that `Object.keys` skips.
  *
  * @example
  * filterCssVariables({fontSize: 16, color: {[VAR_SYMBOL]: true}}) // {fontSize: 16}
@@ -114,8 +116,14 @@ function filterCssVariables(value: any, depth = 0): any | undefined {
   }
 
   if (Array.isArray(value)) {
+    // A nested array that was empty to begin with holds no CSS variables to strip.
+    if (value.length === 0 && depth > 0) {
+      return value;
+    }
+
     // Single-pass filter with map operation
     const filtered: any[] = [];
+    let changed = false;
 
     for (const item of value) {
       const filteredItem = filterCssVariables(item, depth + 1);
@@ -128,10 +136,14 @@ function filterCssVariables(value: any, depth = 0): any | undefined {
         )
       ) {
         filtered.push(filteredItem);
+        if (filteredItem !== item) changed = true;
+      } else {
+        changed = true;
       }
     }
 
-    return filtered.length > 0 ? filtered : undefined;
+    if (filtered.length === 0) return undefined;
+    return changed ? filtered : value;
   }
 
   if (typeof value === "object") {
@@ -143,18 +155,22 @@ function filterCssVariables(value: any, depth = 0): any | undefined {
     // Otherwise, filter VAR_SYMBOL properties from nested objects
     const filtered: Record<string, any> = {};
     let hasProperties = false;
+    let changed = Object.getOwnPropertySymbols(value).length > 0;
 
     // Use Object.keys to only iterate own string properties (not inherited, not Symbols)
     // This intentionally filters out Symbol properties for React Native compatibility
     for (const key of Object.keys(value)) {
-      const filteredValue = filterCssVariables(value[key], depth + 1);
+      const original = value[key];
+      const filteredValue = filterCssVariables(original, depth + 1);
       if (filteredValue !== undefined) {
         filtered[key] = filteredValue;
         hasProperties = true;
       }
+      if (filteredValue !== original) changed = true;
     }
 
-    return hasProperties ? filtered : undefined;
+    if (!hasProperties) return undefined;
+    return changed ? filtered : value;
   }
 
   return value;

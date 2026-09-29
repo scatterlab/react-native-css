@@ -1,3 +1,5 @@
+import { StyleSheet } from "react-native";
+
 import { render } from "@testing-library/react-native";
 import { View } from "react-native-css/components/View";
 import { registerCSS, testID } from "react-native-css/jest";
@@ -68,5 +70,32 @@ describe("inline styles without CSS variables", () => {
     const style = component.props.style as unknown[];
     expect(style[0]).toBe(handle);
     expect(style[1]).toEqual({ opacity: 1 });
+  });
+
+  test("still drop undefined values so they do not override the className", () => {
+    registerCSS(`.w-100 { width: 100px; }`);
+
+    const component = render(
+      <View
+        testID={testID}
+        className="w-100"
+        style={{ width: undefined, height: 10 }}
+      />,
+    ).getByTestId(testID);
+
+    expect(StyleSheet.flatten(component.props.style)).toEqual({
+      width: 100,
+      height: 10,
+    });
+  });
+
+  test("still drop empty nested arrays so they do not override the className", () => {
+    registerCSS(`.w-100 { width: 100px; }`);
+
+    const component = render(
+      <View testID={testID} className="w-100" style={{ transform: [] }} />,
+    ).getByTestId(testID);
+
+    expect(StyleSheet.flatten(component.props.style)).toEqual({ width: 100 });
   });
 });

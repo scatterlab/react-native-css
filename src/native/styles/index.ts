@@ -97,8 +97,10 @@ function flattenStyleArray(styleArray: any[]): any {
  * - Objects: recursively filters properties, returns `undefined` if no properties remain
  * - Primitives (null, undefined, numbers, strings, booleans): returned as-is
  * - Symbol properties: intentionally filtered out for React Native compatibility
- * - Values with nothing to filter are returned as-is, not copied. Reanimated identifies an
- *   animated style handle by reference and keeps members on it that `Object.keys` skips.
+ * - Values with nothing to filter are returned as-is, not copied. `undefined` values and
+ *   empty arrays still count as filtered, so they never override className styles.
+ * - Objects with non-enumerable own properties (Reanimated's animated style handle) are
+ *   returned as-is: they are identified by reference and hold no CSS variables.
  *
  * @example
  * filterCssVariables({fontSize: 16, color: {[VAR_SYMBOL]: true}}) // {fontSize: 16}
@@ -116,11 +118,6 @@ function filterCssVariables(value: any, depth = 0): any | undefined {
   }
 
   if (Array.isArray(value)) {
-    // A nested array that was empty to begin with holds no CSS variables to strip.
-    if (value.length === 0 && depth > 0) {
-      return value;
-    }
-
     // Single-pass filter with map operation
     const filtered: any[] = [];
     let changed = false;
@@ -152,6 +149,14 @@ function filterCssVariables(value: any, depth = 0): any | undefined {
       return undefined;
     }
 
+    // Reanimated's animated style handle is identified by reference and carries a
+    // non-enumerable member (`styleUpdaterContainer`) that a copy would lose.
+    if (
+      Object.getOwnPropertyNames(value).length !== Object.keys(value).length
+    ) {
+      return value;
+    }
+
     // Otherwise, filter VAR_SYMBOL properties from nested objects
     const filtered: Record<string, any> = {};
     let hasProperties = false;
@@ -166,7 +171,10 @@ function filterCssVariables(value: any, depth = 0): any | undefined {
         filtered[key] = filteredValue;
         hasProperties = true;
       }
-      if (filteredValue !== original) changed = true;
+      // A dropped `undefined` counts as a change: kept, it would override the className value.
+      if (filteredValue !== original || filteredValue === undefined) {
+        changed = true;
+      }
     }
 
     if (!hasProperties) return undefined;

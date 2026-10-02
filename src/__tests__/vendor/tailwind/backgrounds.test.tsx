@@ -206,7 +206,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to top in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to top, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -220,7 +220,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to top right in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to top right, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -234,7 +234,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to right in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to right, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -248,7 +248,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to bottom right in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to bottom right, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -262,7 +262,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to bottom in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to bottom, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -276,7 +276,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to bottom left in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to bottom left, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -290,7 +290,7 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to left in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to left, #fb2c36 0%, #2b7fff 100%)",
         },
       },
     });
@@ -304,9 +304,43 @@ describe("Backgrounds - Background Image", () => {
       props: {
         style: {
           experimental_backgroundImage:
-            "linear-gradient(to top left in oklab, #fb2c36 0%, #2b7fff 100%)",
+            "linear-gradient(to top left, #fb2c36 0%, #2b7fff 100%)",
         },
       },
+    });
+  });
+  test.each([
+    [
+      "bg-linear-to-r from-red-500 to-blue-500",
+      "linear-gradient(to right, #fb2c36 0%, #2b7fff 100%)",
+    ],
+    [
+      "bg-linear-to-br from-red-500 to-blue-500",
+      "linear-gradient(to bottom right, #fb2c36 0%, #2b7fff 100%)",
+    ],
+    [
+      "bg-linear-135 from-red-500 to-blue-500",
+      "linear-gradient(135deg, #fb2c36 0%, #2b7fff 100%)",
+    ],
+    [
+      "bg-linear-to-r/oklch from-red-500 to-blue-500",
+      "linear-gradient(to right, #fb2c36 0%, #2b7fff 100%)",
+    ],
+    [
+      "bg-linear-to-r/longer from-red-500 to-blue-500",
+      "linear-gradient(to right, #fb2c36 0%, #2b7fff 100%)",
+    ],
+    [
+      "bg-linear-to-r from-red-500 via-green-500 to-blue-500",
+      "linear-gradient(to right, #fb2c36 0%, #00c950 50%, #2b7fff 100%)",
+    ],
+    [
+      "bg-radial from-red-500 to-blue-500",
+      "radial-gradient(#fb2c36 0%, #2b7fff 100%)",
+    ],
+  ])("%s", async (className, experimental_backgroundImage) => {
+    expect(await renderSimple({ className })).toStrictEqual({
+      props: { style: { experimental_backgroundImage } },
     });
   });
 });

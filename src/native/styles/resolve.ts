@@ -139,9 +139,8 @@ export function resolveValue(
             .filter((value) => value !== "/")
             .join(", ");
 
-          if (name === "radial-gradient") {
-            // Nativewind / Tailwind CSS hack which can force the 'in oklab' color space
-            joinedArgs = joinedArgs.replace("in oklab, ", "");
+          if (name === "linear-gradient" || name === "radial-gradient") {
+            joinedArgs = removeColorInterpolationMethod(joinedArgs);
           }
 
           value = `${name}(${joinedArgs})`;
@@ -153,6 +152,26 @@ export function resolveValue(
       return castToArray && value && !Array.isArray(value) ? [value] : value;
     }
   }
+}
+
+const colorInterpolationMethod =
+  /(?:^|\s+)in\s+[a-z0-9-]+(?:\s+(?:shorter|longer|increasing|decreasing)\s+hue)?(?=\s|$)/i;
+
+/**
+ * React Native's gradient parser rejects a CSS Color 4 `<color-interpolation-method>`
+ * (Tailwind CSS v4 always emits `in oklab`) and silently drops the whole gradient.
+ */
+function removeColorInterpolationMethod(args: string) {
+  const end = args.indexOf(",");
+  const first = end === -1 ? args : args.slice(0, end);
+  const rest = end === -1 ? "" : args.slice(end + 1).trimStart();
+
+  const position = first.replace(colorInterpolationMethod, "").trim();
+  if (position === first.trim()) {
+    return args;
+  }
+
+  return position ? `${position}, ${rest}` : rest;
 }
 
 function isDescriptorArray(

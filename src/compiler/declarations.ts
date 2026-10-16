@@ -26,6 +26,9 @@ import type {
   LineStyle,
   MaxSize,
   NumberOrPercentage,
+  Position,
+  PositionComponentFor_HorizontalPositionKeyword,
+  PositionComponentFor_VerticalPositionKeyword,
   Scale,
   Size,
   Size2DFor_DimensionPercentageFor_LengthValue,
@@ -96,6 +99,9 @@ const parsers: {
   "backface-visibility": parseBackfaceVisibility,
   "background-color": parseColorDeclaration,
   "background-image": parseBackgroundImage,
+  "background-position": parseBackgroundPosition,
+  "background-repeat": parseBackgroundRepeat,
+  "background-size": parseBackgroundSize,
   "block-size": parseSizeDeclaration,
   "border": parseBorder,
   "border-block": parseBorderBlock,
@@ -3159,6 +3165,143 @@ function parseBackgroundImage(
       return [];
     }),
   );
+  return;
+}
+
+/**
+ * React Native parses background-size/position/repeat from CSS strings, but only
+ * accepts `px` and `%` units, so lengths are serialized at compile time.
+ *
+ * The `experimental_` keys are used because React Native 0.83-0.87 only accept
+ * those, and 0.88 keeps them as aliases of the unprefixed keys.
+ */
+function parseBackgroundSize(
+  declaration: DeclarationType<"background-size">,
+  builder: StylesheetBuilder,
+) {
+  const layers = declaration.value.map((size) => {
+    switch (size.type) {
+      case "cover":
+      case "contain":
+        return size.type;
+      case "explicit": {
+        const width = lengthPercentageOrAutoToCss(size.width, builder);
+        const height = lengthPercentageOrAutoToCss(size.height, builder);
+        return width && height ? `${width} ${height}` : undefined;
+      }
+    }
+  });
+
+  addBackgroundLayers("experimental_backgroundSize", layers, builder);
+}
+
+function parseBackgroundPosition(
+  declaration: DeclarationType<"background-position">,
+  builder: StylesheetBuilder,
+) {
+  addBackgroundLayers(
+    "experimental_backgroundPosition",
+    declaration.value.map((position) => positionToCss(position, builder)),
+    builder,
+  );
+}
+
+function parseBackgroundRepeat(
+  declaration: DeclarationType<"background-repeat">,
+  builder: StylesheetBuilder,
+) {
+  addBackgroundLayers(
+    "experimental_backgroundRepeat",
+    declaration.value.map(({ x, y }) => {
+      if (x === y) {
+        return x;
+      } else if (x === "repeat" && y === "no-repeat") {
+        return "repeat-x";
+      } else if (x === "no-repeat" && y === "repeat") {
+        return "repeat-y";
+      }
+      return `${x} ${y}`;
+    }),
+    builder,
+  );
+}
+
+function addBackgroundLayers(
+  property: string,
+  layers: (string | undefined)[],
+  builder: StylesheetBuilder,
+) {
+  if (layers.some((layer) => layer === undefined)) {
+    return;
+  }
+
+  builder.addDescriptor(property, layers.join(", "));
+}
+
+function positionToCss(
+  position: Position,
+  builder: StylesheetBuilder,
+): string | undefined {
+  const x = positionComponentToCss(position.x, builder);
+  const y = positionComponentToCss(position.y, builder);
+  return x && y ? `${x} ${y}` : undefined;
+}
+
+function positionComponentToCss(
+  component:
+    | PositionComponentFor_HorizontalPositionKeyword
+    | PositionComponentFor_VerticalPositionKeyword,
+  builder: StylesheetBuilder,
+): string | undefined {
+  switch (component.type) {
+    case "center":
+      return "center";
+    case "length":
+      return lengthToCss(component.value, builder);
+    case "side": {
+      if (!component.offset) {
+        return component.side;
+      }
+      const offset = lengthToCss(component.offset, builder);
+      return offset ? `${component.side} ${offset}` : undefined;
+    }
+  }
+}
+
+function lengthPercentageOrAutoToCss(
+  value: LengthPercentageOrAuto,
+  builder: StylesheetBuilder,
+) {
+  return value.type === "auto" ? "auto" : lengthToCss(value.value, builder);
+}
+
+/**
+ * Serialize a length to a `px` or `%` string. Units that can only be resolved at
+ * runtime (em, vw, calc(), etc) cannot be embedded in a string and are dropped.
+ */
+function lengthToCss(
+  length: DimensionPercentageFor_LengthValue | Length,
+  builder: StylesheetBuilder,
+): string | undefined {
+  const value = parseLength(length, builder);
+
+  if (typeof value === "number") {
+    return `${value}px`;
+  } else if (typeof value === "string") {
+    return value;
+  }
+
+  if (value !== undefined) {
+    builder.addWarning(
+      "value",
+      "value" in length &&
+        typeof length.value === "object" &&
+        "unit" in length.value
+        ? `${length.value.value}${length.value.unit}`
+        : length.type,
+    );
+  }
+
   return;
 }
 

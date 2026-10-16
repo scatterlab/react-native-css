@@ -99,56 +99,47 @@ describe("Backgrounds - Background Origin", () => {
 describe("Backgrounds - Background Position", () => {
   test("bg-bottom", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "center bottom" } },
     });
   });
   test("bg-center", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "center center" } },
     });
   });
   test("bg-left", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "0px center" } },
     });
   });
   test("bg-left-bottom", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "0px 100%" } },
     });
   });
   test("bg-left-top", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "0px 0px" } },
     });
   });
   test("bg-right", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "100% center" } },
     });
   });
   test("bg-right-bottom", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "100% 100%" } },
     });
   });
   test("bg-right-top", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "100% 0px" } },
     });
   });
   test("bg-top", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-position"] },
+      props: { style: { experimental_backgroundPosition: "center top" } },
     });
   });
 });
@@ -156,8 +147,7 @@ describe("Backgrounds - Background Position", () => {
 describe("Backgrounds - Background Repeat", () => {
   test("bg-repeat", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-repeat"] },
+      props: { style: { experimental_backgroundRepeat: "repeat" } },
     });
   });
 });
@@ -165,20 +155,17 @@ describe("Backgrounds - Background Repeat", () => {
 describe("Backgrounds - Background Size", () => {
   test("bg-auto", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-size"] },
+      props: { style: { experimental_backgroundSize: "auto auto" } },
     });
   });
   test("bg-cover", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-size"] },
+      props: { style: { experimental_backgroundSize: "cover" } },
     });
   });
   test("bg-contain", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["background-size"] },
+      props: { style: { experimental_backgroundSize: "contain" } },
     });
   });
 });

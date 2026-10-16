@@ -49,3 +49,28 @@ test("background lengths that need runtime resolution are dropped", () => {
     },
   });
 });
+
+test("transform-origin offsets from the right or bottom edge are dropped", () => {
+  const compiled = compileWithAutoDebug(
+    `.my-class { transform-origin: right 10px top; }`,
+  );
+
+  expect(compiled.stylesheet()).toStrictEqual({});
+  expect(compiled.warnings()).toStrictEqual({
+    values: { "transform-origin": ["right offset"] },
+  });
+});
+
+test.each([
+  "background-position: var(--x) 0;",
+  "background-repeat: var(--x);",
+  "background-size: var(--x);",
+  "transform-origin: var(--x);",
+])("%s is dropped as it cannot be resolved at runtime", (declaration) => {
+  const compiled = compileWithAutoDebug(`.my-class { ${declaration} }`);
+
+  expect(compiled.stylesheet()).toStrictEqual({});
+  expect(compiled.warnings()).toStrictEqual({
+    properties: [declaration.split(":")[0]],
+  });
+});

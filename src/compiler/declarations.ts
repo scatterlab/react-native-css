@@ -81,6 +81,17 @@ const unparsedRuntimeParsing = new Set([
   "translate",
 ]);
 
+/**
+ * Properties whose React Native value must be serialized at compile time, so
+ * they cannot contain var() or other values resolved at runtime.
+ */
+const compileTimeOnlyProperties = new Set([
+  "background-position",
+  "background-repeat",
+  "background-size",
+  "transform-origin",
+]);
+
 const parsers: {
   [K in Declaration["property"]]?: Parser<K>;
 } = {
@@ -247,6 +258,7 @@ const parsers: {
   "text-transform": ({ value }) => value.case,
   "top": parseSizeWithAutoDeclaration,
   "transform": parseTransform,
+  "transform-origin": parseTransformOrigin,
   "transition": addTransitionValue,
   "transition-delay": addTransitionValue,
   "transition-duration": addTransitionValue,
@@ -919,7 +931,7 @@ export function parseUnparsedDeclaration(
 ) {
   let property = declaration.value.propertyId.property;
 
-  if (!(property in parsers)) {
+  if (!(property in parsers) || compileTimeOnlyProperties.has(property)) {
     builder.addWarning("property", property);
     return;
   }
@@ -3170,6 +3182,53 @@ function parseBackgroundImage(
 }
 
 /**
+ * Uses the [x, y, z] array form, as the string form of React Native < 0.88 cannot
+ * parse decimal or negative values.
+ */
+function parseTransformOrigin(
+  declaration: DeclarationType<"transform-origin">,
+  builder: StylesheetBuilder,
+) {
+  const x = transformOriginComponent(declaration.value.x, builder);
+  const y = transformOriginComponent(declaration.value.y, builder);
+
+  if (x === undefined || y === undefined) {
+    return;
+  }
+
+  builder.addDescriptor("transformOrigin", [x, y, 0]);
+}
+
+function transformOriginComponent(
+  component:
+    | PositionComponentFor_HorizontalPositionKeyword
+    | PositionComponentFor_VerticalPositionKeyword,
+  builder: StylesheetBuilder,
+): number | string | undefined {
+  switch (component.type) {
+    case "center":
+      return "50%";
+    case "length":
+      return staticLength(component.value, builder);
+    case "side": {
+      const fromStart = component.side === "left" || component.side === "top";
+
+      if (!component.offset) {
+        return fromStart ? "0%" : "100%";
+      } else if (fromStart) {
+        return staticLength(component.offset, builder);
+      } else if (component.offset.type === "percentage") {
+        return `${round(100 - component.offset.value * 100)}%`;
+      }
+
+      // `right 10px` would need calc(100% - 10px)
+      builder.addWarning("value", `${component.side} offset`);
+      return;
+    }
+  }
+}
+
+/**
  * React Native parses background-size/position/repeat from CSS strings, but only
  * accepts `px` and `%` units, so lengths are serialized at compile time.
  *
@@ -3277,18 +3336,27 @@ function lengthPercentageOrAutoToCss(
 }
 
 /**
- * Serialize a length to a `px` or `%` string. Units that can only be resolved at
- * runtime (em, vw, calc(), etc) cannot be embedded in a string and are dropped.
+ * Serialize a length to a `px` or `%` string.
  */
 function lengthToCss(
   length: DimensionPercentageFor_LengthValue | Length,
   builder: StylesheetBuilder,
 ): string | undefined {
+  const value = staticLength(length, builder);
+  return typeof value === "number" ? `${value}px` : value;
+}
+
+/**
+ * Units that can only be resolved at runtime (em, vw, calc(), etc) cannot be
+ * used where React Native needs a literal value, so they are dropped.
+ */
+function staticLength(
+  length: DimensionPercentageFor_LengthValue | Length,
+  builder: StylesheetBuilder,
+): number | string | undefined {
   const value = parseLength(length, builder);
 
-  if (typeof value === "number") {
-    return `${value}px`;
-  } else if (typeof value === "string") {
+  if (typeof value === "number" || typeof value === "string") {
     return value;
   }
 

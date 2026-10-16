@@ -1044,6 +1044,8 @@ export function parseCustomDeclaration(
     );
   } else if (property === "corner-shape") {
     parseCornerShape(declaration.value, builder);
+  } else if (property === "font-variation-settings") {
+    parseFontVariationSettings(declaration.value, builder);
   } else if (property in keywordCustomProperties) {
     const value = parseUnparsed(declaration.value.value, builder, property);
 
@@ -3563,6 +3565,51 @@ function parseObjectPosition(
     "join",
     [parseUnparsed(declaration.value, builder, "object-position"), " "],
   ]);
+}
+
+/**
+ * React Native (0.88+) parses the CSS string form natively: `'wght' 600, 'wdth' 80`
+ */
+function parseFontVariationSettings(
+  declaration: CustomProperty,
+  builder: StylesheetBuilder,
+) {
+  let value = "";
+
+  for (const token of declaration.value) {
+    if (token.type !== "token") {
+      builder.addWarning("property", declaration.name);
+      return;
+    }
+
+    switch (token.value.type) {
+      case "string": {
+        const axis = token.value.value;
+        value += axis.includes("'") ? `"${axis}"` : `'${axis}'`;
+        break;
+      }
+      case "number":
+        value += String(token.value.value);
+        break;
+      case "comma":
+        value += ",";
+        break;
+      case "white-space":
+        value += " ";
+        break;
+      case "ident":
+        value += token.value.value;
+        break;
+      default:
+        builder.addWarning("property", declaration.name);
+        return;
+    }
+  }
+
+  builder.addDescriptor(
+    "font-variation-settings",
+    value.replace(/\s*,\s*/g, ", ").trim(),
+  );
 }
 
 function parseCursor(

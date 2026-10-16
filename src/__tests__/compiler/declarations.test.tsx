@@ -13,6 +13,8 @@ const tests = [
   ["background-size: 10px 50%;", [{ d: [{ experimental_backgroundSize: "10px 50%" }], s: [1, 1] }]],
   ["background-size: cover, 20px auto;", [{ d: [{ experimental_backgroundSize: "cover, 20px auto" }], s: [1, 1] }]],
   ["caret-color: black",[{ d: [["#000", ["cursorColor"]]], s: [1, 1] }]],
+  ["font-variation-settings: 'wght' 600, \"wdth\" 80.5;", [{ d: [{ fontVariationSettings: "'wght' 600, 'wdth' 80.5" }], s: [1, 1] }]],
+  ["font-variation-settings: normal;", [{ d: [{ fontVariationSettings: "normal" }], s: [1, 1] }]],
   ["fill: black;", [{ d: [["#000", ["fill"]]], s: [1, 1] }]],
   ["rotate: 3deg;", [{ d: [[[{}, "rotateZ", "3deg"], "rotateZ"]], s: [1, 1] }]],
   ["rotate: x 3deg;", [{ d: [[[{}, "rotateX", "3deg"], "rotateX"]], s: [1, 1] }]],
@@ -90,3 +92,14 @@ test.each([
     expect(compiled.warnings()).toStrictEqual({ values });
   },
 );
+
+test("font-variation-settings with var() is dropped", () => {
+  const compiled = compileWithAutoDebug(
+    `.my-class { font-variation-settings: var(--axes); }`,
+  );
+
+  expect(compiled.stylesheet()).toStrictEqual({});
+  expect(compiled.warnings()).toStrictEqual({
+    properties: ["font-variation-settings"],
+  });
+});

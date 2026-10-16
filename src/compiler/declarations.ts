@@ -10,6 +10,7 @@ import type {
   CustomProperty,
   Declaration,
   DimensionPercentageFor_LengthValue,
+  EndingShape,
   EnvironmentVariable,
   FontSize,
   FontStyle,
@@ -26,6 +27,9 @@ import type {
   LineStyle,
   MaxSize,
   NumberOrPercentage,
+  Position,
+  PositionComponentFor_HorizontalPositionKeyword,
+  PositionComponentFor_VerticalPositionKeyword,
   Scale,
   Size,
   Size2DFor_DimensionPercentageFor_LengthValue,
@@ -61,7 +65,6 @@ type Parser<T extends Declaration["property"] = Declaration["property"]> = (
 ) => StyleDescriptor | void;
 
 const propertyRename: Record<string, string> = {
-  "background-image": "experimental_backgroundImage",
   "font-variant-caps": "font-variant",
 };
 
@@ -75,6 +78,17 @@ const unparsedRuntimeParsing = new Set([
   "text-shadow",
   "transform",
   "translate",
+]);
+
+/**
+ * Properties whose React Native value must be serialized at compile time, so
+ * they cannot contain var() or other values resolved at runtime.
+ */
+const compileTimeOnlyProperties = new Set([
+  "background-position",
+  "background-repeat",
+  "background-size",
+  "transform-origin",
 ]);
 
 const parsers: {
@@ -96,6 +110,9 @@ const parsers: {
   "backface-visibility": parseBackfaceVisibility,
   "background-color": parseColorDeclaration,
   "background-image": parseBackgroundImage,
+  "background-position": parseBackgroundPosition,
+  "background-repeat": parseBackgroundRepeat,
+  "background-size": parseBackgroundSize,
   "block-size": parseSizeDeclaration,
   "border": parseBorder,
   "border-block": parseBorderBlock,
@@ -158,6 +175,7 @@ const parsers: {
   "container": parseContainer,
   "container-name": parseContainerName,
   "container-type": parseContainerType,
+  "cursor": parseCursor,
   "display": parseDisplay,
   "direction": parseDirection,
   "fill": parseSVGPaint,
@@ -240,6 +258,7 @@ const parsers: {
   "text-transform": ({ value }) => value.case,
   "top": parseSizeWithAutoDeclaration,
   "transform": parseTransform,
+  "transform-origin": parseTransformOrigin,
   "transition": addTransitionValue,
   "transition-delay": addTransitionValue,
   "transition-duration": addTransitionValue,
@@ -258,6 +277,32 @@ const parsers: {
   parsePointerEvents as Parser;
 
 const validProperties = new Set(Object.keys(parsers));
+
+/**
+ * Properties LightningCSS doesn't parse, with the keywords React Native accepts
+ */
+const keywordCustomProperties: Record<string, Set<string>> = {
+  "isolation": new Set(["auto", "isolate"]),
+  "mix-blend-mode": new Set([
+    "normal",
+    "multiply",
+    "screen",
+    "overlay",
+    "darken",
+    "lighten",
+    "color-dodge",
+    "color-burn",
+    "hard-light",
+    "soft-light",
+    "difference",
+    "exclusion",
+    "hue",
+    "saturation",
+    "color",
+    "luminosity",
+    "plus-lighter",
+  ]),
+};
 
 export function parseDeclaration(
   declaration: Declaration,
@@ -912,7 +957,7 @@ export function parseUnparsedDeclaration(
 ) {
   let property = declaration.value.propertyId.property;
 
-  if (!(property in parsers)) {
+  if (!(property in parsers) || compileTimeOnlyProperties.has(property)) {
     builder.addWarning("property", property);
     return;
   }
@@ -998,6 +1043,20 @@ export function parseCustomDeclaration(
     );
   } else if (property === "corner-shape") {
     parseCornerShape(declaration.value, builder);
+  } else if (property === "font-variation-settings") {
+    parseFontVariationSettings(declaration.value, builder);
+  } else if (property in keywordCustomProperties) {
+    const value = parseUnparsed(declaration.value.value, builder, property);
+
+    if (
+      typeof value === "string" &&
+      !keywordCustomProperties[property]?.has(value)
+    ) {
+      builder.setWarningProperty(property);
+      builder.addWarning("value", value);
+    } else {
+      builder.addDescriptor(property, value);
+    }
   } else if (property === "font-variant") {
     const parsedFontVariant = parseFontVariantCaps(
       parseUnparsed(
@@ -2624,7 +2683,7 @@ export function parseDimensionPercentageFor_LengthValue(
   }
 }
 
-const allowAutoProperties = new Set(["pointer-events"]);
+const allowAutoProperties = new Set(["isolation", "pointer-events"]);
 
 export function parseEnv(
   value: EnvironmentVariable,
@@ -3145,7 +3204,7 @@ function parseBackgroundImage(
   builder: StylesheetBuilder,
 ) {
   builder.addDescriptor(
-    "experimental_backgroundImage",
+    "background-image",
     declaration.value.flatMap((image): StyleDescriptor[] => {
       switch (image.type) {
         case "gradient": {
@@ -3162,24 +3221,276 @@ function parseBackgroundImage(
   return;
 }
 
+/**
+ * Uses the [x, y, z] array form, as the string form of React Native < 0.88 cannot
+ * parse decimal or negative values.
+ */
+function parseTransformOrigin(
+  declaration: DeclarationType<"transform-origin">,
+  builder: StylesheetBuilder,
+) {
+  const x = transformOriginComponent(declaration.value.x, builder);
+  const y = transformOriginComponent(declaration.value.y, builder);
+
+  if (x === undefined || y === undefined) {
+    return;
+  }
+
+  builder.addDescriptor("transformOrigin", [x, y, 0]);
+}
+
+function transformOriginComponent(
+  component:
+    | PositionComponentFor_HorizontalPositionKeyword
+    | PositionComponentFor_VerticalPositionKeyword,
+  builder: StylesheetBuilder,
+): number | string | undefined {
+  switch (component.type) {
+    case "center":
+      return "50%";
+    case "length":
+      return staticLength(component.value, builder);
+    case "side": {
+      const fromStart = component.side === "left" || component.side === "top";
+
+      if (!component.offset) {
+        return fromStart ? "0%" : "100%";
+      } else if (fromStart) {
+        return staticLength(component.offset, builder);
+      } else if (component.offset.type === "percentage") {
+        return `${round(100 - component.offset.value * 100)}%`;
+      }
+
+      // `right 10px` would need calc(100% - 10px)
+      builder.addWarning("value", `${component.side} offset`);
+      return;
+    }
+  }
+}
+
+/**
+ * React Native parses background-size/position/repeat from CSS strings, but only
+ * accepts `px` and `%` units, so lengths are serialized at compile time.
+ *
+ * The `experimental_` keys are used because React Native 0.83-0.87 only accept
+ * those, and 0.88 keeps them as aliases of the unprefixed keys.
+ */
+function parseBackgroundSize(
+  declaration: DeclarationType<"background-size">,
+  builder: StylesheetBuilder,
+) {
+  const layers = declaration.value.map((size) => {
+    switch (size.type) {
+      case "cover":
+      case "contain":
+        return size.type;
+      case "explicit": {
+        const width = lengthPercentageOrAutoToCss(size.width, builder);
+        const height = lengthPercentageOrAutoToCss(size.height, builder);
+        return width && height ? `${width} ${height}` : undefined;
+      }
+    }
+  });
+
+  addBackgroundLayers("experimental_backgroundSize", layers, builder);
+}
+
+function parseBackgroundPosition(
+  declaration: DeclarationType<"background-position">,
+  builder: StylesheetBuilder,
+) {
+  addBackgroundLayers(
+    "experimental_backgroundPosition",
+    declaration.value.map((position) => positionToCss(position, builder)),
+    builder,
+  );
+}
+
+function parseBackgroundRepeat(
+  declaration: DeclarationType<"background-repeat">,
+  builder: StylesheetBuilder,
+) {
+  addBackgroundLayers(
+    "experimental_backgroundRepeat",
+    declaration.value.map(({ x, y }) => {
+      if (x === y) {
+        return x;
+      } else if (x === "repeat" && y === "no-repeat") {
+        return "repeat-x";
+      } else if (x === "no-repeat" && y === "repeat") {
+        return "repeat-y";
+      }
+      return `${x} ${y}`;
+    }),
+    builder,
+  );
+}
+
+function addBackgroundLayers(
+  property: string,
+  layers: (string | undefined)[],
+  builder: StylesheetBuilder,
+) {
+  if (layers.some((layer) => layer === undefined)) {
+    return;
+  }
+
+  builder.addDescriptor(property, layers.join(", "));
+}
+
+function positionToCss(
+  position: Position,
+  builder: StylesheetBuilder,
+): string | undefined {
+  const x = positionComponentToCss(position.x, builder);
+  const y = positionComponentToCss(position.y, builder);
+  return x && y ? `${x} ${y}` : undefined;
+}
+
+function positionComponentToCss(
+  component:
+    | PositionComponentFor_HorizontalPositionKeyword
+    | PositionComponentFor_VerticalPositionKeyword,
+  builder: StylesheetBuilder,
+): string | undefined {
+  switch (component.type) {
+    case "center":
+      return "center";
+    case "length":
+      return lengthToCss(component.value, builder);
+    case "side": {
+      if (!component.offset) {
+        return component.side;
+      }
+      const offset = lengthToCss(component.offset, builder);
+      return offset ? `${component.side} ${offset}` : undefined;
+    }
+  }
+}
+
+function lengthPercentageOrAutoToCss(
+  value: LengthPercentageOrAuto,
+  builder: StylesheetBuilder,
+) {
+  return value.type === "auto" ? "auto" : lengthToCss(value.value, builder);
+}
+
+/**
+ * Serialize a length to a `px` or `%` string.
+ */
+function lengthToCss(
+  length: DimensionPercentageFor_LengthValue | Length,
+  builder: StylesheetBuilder,
+): string | undefined {
+  const value = staticLength(length, builder);
+  return typeof value === "number" ? `${value}px` : value;
+}
+
+/**
+ * Units that can only be resolved at runtime (em, vw, calc(), etc) cannot be
+ * used where React Native needs a literal value, so they are dropped.
+ */
+function staticLength(
+  length: DimensionPercentageFor_LengthValue | Length,
+  builder: StylesheetBuilder,
+): number | string | undefined {
+  const value = parseLength(length, builder);
+
+  if (typeof value === "number" || typeof value === "string") {
+    return value;
+  }
+
+  if (value !== undefined) {
+    builder.addWarning(
+      "value",
+      "value" in length &&
+        typeof length.value === "object" &&
+        "unit" in length.value
+        ? `${length.value.value}${length.value.unit}`
+        : length.type,
+    );
+  }
+
+  return;
+}
+
 function parseGradient(
   gradient: Gradient,
   builder: StylesheetBuilder,
 ): StyleDescriptor {
   switch (gradient.type) {
     case "linear": {
-      return [
+      return gradientToCss([
         {},
         "linear-gradient",
         [
           parseLineDirection(gradient.direction, builder),
           ...gradient.items.map((item) => parseGradientItem(item, builder)),
         ],
-      ];
+      ]);
+    }
+    case "radial": {
+      const shape = endingShapeToCss(gradient.shape, builder);
+      const position = positionToCss(gradient.position, builder);
+
+      if (!shape || !position) {
+        return;
+      }
+
+      return gradientToCss([
+        {},
+        "radial-gradient",
+        [
+          `${shape} at ${position}`,
+          ...gradient.items.map((item) => parseGradientItem(item, builder)),
+        ],
+      ]);
     }
   }
 
   return;
+}
+
+/**
+ * Static gradients are serialized at compile time. The runtime treats strings
+ * ending in `px` as inlined variables and strips the unit, which would corrupt
+ * lengths inside the gradient.
+ */
+function gradientToCss(
+  gradient: [object, string, StyleDescriptor[]],
+): StyleDescriptor {
+  const [, name, args] = gradient;
+
+  if (args.includes(undefined)) {
+    return;
+  }
+
+  const strings = args.filter((arg): arg is string => typeof arg === "string");
+  if (strings.length !== args.length) {
+    return gradient as StyleDescriptor;
+  }
+
+  return `${name}(${strings.join(", ")})`;
+}
+
+function endingShapeToCss(
+  shape: EndingShape,
+  builder: StylesheetBuilder,
+): string | undefined {
+  if (shape.type === "circle") {
+    if (shape.value.type === "extent") {
+      return `circle ${shape.value.value}`;
+    }
+    const radius = lengthToCss(shape.value.value, builder);
+    return radius ? `circle ${radius}` : undefined;
+  }
+
+  if (shape.value.type === "extent") {
+    return `ellipse ${shape.value.value}`;
+  }
+  const x = lengthToCss(shape.value.x, builder);
+  const y = lengthToCss(shape.value.y, builder);
+  return x && y ? `ellipse ${x} ${y}` : undefined;
 }
 
 function parseLineDirection(
@@ -3208,15 +3519,23 @@ function parseGradientItem(
 ): StyleDescriptor {
   switch (item.type) {
     case "color-stop": {
-      const args: StyleDescriptor[] = [parseColor(item.color, builder)];
-      if (item.position) {
-        args.push(parseLength(item.position, builder));
+      const color = parseColor(item.color, builder);
+
+      if (!item.position) {
+        return color;
       }
 
-      return [{}, "@colorStop", args, 1];
+      const position = lengthToCss(item.position, builder);
+      if (position === undefined) {
+        return;
+      }
+
+      return typeof color === "string"
+        ? `${color} ${position}`
+        : [color, position];
     }
     case "hint":
-      return parseLength(item.value, builder);
+      return lengthToCss(item.value, builder);
   }
 }
 
@@ -3245,6 +3564,64 @@ function parseObjectPosition(
     "join",
     [parseUnparsed(declaration.value, builder, "object-position"), " "],
   ]);
+}
+
+/**
+ * React Native (0.88+) parses the CSS string form natively: `'wght' 600, 'wdth' 80`
+ */
+function parseFontVariationSettings(
+  declaration: CustomProperty,
+  builder: StylesheetBuilder,
+) {
+  let value = "";
+
+  for (const token of declaration.value) {
+    if (token.type !== "token") {
+      builder.addWarning("property", declaration.name);
+      return;
+    }
+
+    switch (token.value.type) {
+      case "string": {
+        const axis = token.value.value;
+        value += axis.includes("'") ? `"${axis}"` : `'${axis}'`;
+        break;
+      }
+      case "number":
+        value += String(token.value.value);
+        break;
+      case "comma":
+        value += ",";
+        break;
+      case "white-space":
+        value += " ";
+        break;
+      case "ident":
+        value += token.value.value;
+        break;
+      default:
+        builder.addWarning("property", declaration.name);
+        return;
+    }
+  }
+
+  builder.addDescriptor(
+    "font-variation-settings",
+    value.replace(/\s*,\s*/g, ", ").trim(),
+  );
+}
+
+function parseCursor(
+  declaration: DeclarationType<"cursor">,
+  builder: StylesheetBuilder,
+) {
+  const { images, keyword } = declaration.value;
+
+  if (images.length === 0 && (keyword === "auto" || keyword === "pointer")) {
+    builder.addDescriptor("cursor", keyword);
+  } else {
+    builder.addWarning("value", keyword);
+  }
 }
 
 function parseCornerShape(

@@ -24,7 +24,7 @@ test.each([
     );
     render(<View testID="subject" className="subject" />);
     const value =
-      screen.getByTestId("subject").props.style.experimental_backgroundImage;
+      screen.getByTestId("subject").props.style.backgroundImage;
 
     const css = expected
       ? `linear-gradient(${expected}, red, blue)`
@@ -45,7 +45,7 @@ test.each([
     );
     render(<View testID="subject" className="subject" />);
     const value =
-      screen.getByTestId("subject").props.style.experimental_backgroundImage;
+      screen.getByTestId("subject").props.style.backgroundImage;
 
     expect(value).toBe(css);
     expect(processBackgroundImage(value)).toHaveLength(1);

@@ -10,6 +10,7 @@ import type {
   CustomProperty,
   Declaration,
   DimensionPercentageFor_LengthValue,
+  EndingShape,
   EnvironmentVariable,
   FontSize,
   FontStyle,
@@ -3311,18 +3312,77 @@ function parseGradient(
 ): StyleDescriptor {
   switch (gradient.type) {
     case "linear": {
-      return [
+      return gradientToCss([
         {},
         "linear-gradient",
         [
           parseLineDirection(gradient.direction, builder),
           ...gradient.items.map((item) => parseGradientItem(item, builder)),
         ],
-      ];
+      ]);
+    }
+    case "radial": {
+      const shape = endingShapeToCss(gradient.shape, builder);
+      const position = positionToCss(gradient.position, builder);
+
+      if (!shape || !position) {
+        return;
+      }
+
+      return gradientToCss([
+        {},
+        "radial-gradient",
+        [
+          `${shape} at ${position}`,
+          ...gradient.items.map((item) => parseGradientItem(item, builder)),
+        ],
+      ]);
     }
   }
 
   return;
+}
+
+/**
+ * Static gradients are serialized at compile time. The runtime treats strings
+ * ending in `px` as inlined variables and strips the unit, which would corrupt
+ * lengths inside the gradient.
+ */
+function gradientToCss(
+  gradient: [object, string, StyleDescriptor[]],
+): StyleDescriptor {
+  const [, name, args] = gradient;
+
+  if (args.includes(undefined)) {
+    return;
+  }
+
+  const strings = args.filter((arg): arg is string => typeof arg === "string");
+  if (strings.length !== args.length) {
+    return gradient as StyleDescriptor;
+  }
+
+  return `${name}(${strings.join(", ")})`;
+}
+
+function endingShapeToCss(
+  shape: EndingShape,
+  builder: StylesheetBuilder,
+): string | undefined {
+  if (shape.type === "circle") {
+    if (shape.value.type === "extent") {
+      return `circle ${shape.value.value}`;
+    }
+    const radius = lengthToCss(shape.value.value, builder);
+    return radius ? `circle ${radius}` : undefined;
+  }
+
+  if (shape.value.type === "extent") {
+    return `ellipse ${shape.value.value}`;
+  }
+  const x = lengthToCss(shape.value.x, builder);
+  const y = lengthToCss(shape.value.y, builder);
+  return x && y ? `ellipse ${x} ${y}` : undefined;
 }
 
 function parseLineDirection(
@@ -3351,15 +3411,23 @@ function parseGradientItem(
 ): StyleDescriptor {
   switch (item.type) {
     case "color-stop": {
-      const args: StyleDescriptor[] = [parseColor(item.color, builder)];
-      if (item.position) {
-        args.push(parseLength(item.position, builder));
+      const color = parseColor(item.color, builder);
+
+      if (!item.position) {
+        return color;
       }
 
-      return [{}, "@colorStop", args, 1];
+      const position = lengthToCss(item.position, builder);
+      if (position === undefined) {
+        return;
+      }
+
+      return typeof color === "string"
+        ? `${color} ${position}`
+        : [color, position];
     }
     case "hint":
-      return parseLength(item.value, builder);
+      return lengthToCss(item.value, builder);
   }
 }
 

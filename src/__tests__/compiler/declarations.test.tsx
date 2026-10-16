@@ -18,6 +18,8 @@ const tests = [
   ["rotate: x 3deg;", [{ d: [[[{}, "rotateX", "3deg"], "rotateX"]], s: [1, 1] }]],
   ["stroke-width: 1px;", [{ d: [[1, ["strokeWidth"]]], s: [1, 1] }]],
   ["stroke: black;", [{ d: [["#000", ["stroke"]]], s: [1, 1] }]],
+  ["transform-origin: 12.5px -4px;", [{ d: [{ transformOrigin: [12.5, -4, 0] }], s: [1, 1] }]],
+  ["transform-origin: left 10px bottom 25%;", [{ d: [{ transformOrigin: [10, "75%", 0] }], s: [1, 1] }]],
 ] as const;
 
 test.each(tests)("declarations for %s", (declarations, expected) => {

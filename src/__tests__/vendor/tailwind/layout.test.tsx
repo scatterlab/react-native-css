@@ -375,14 +375,12 @@ describe("Layout - Clear", () => {
 describe("Layout - Isolation", () => {
   test("isolate", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["isolation"] },
+      props: { style: { isolation: "isolate" } },
     });
   });
   test("isolation-auto", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
-      props: {},
-      warnings: { properties: ["isolation"] },
+      props: { style: { isolation: "auto" } },
     });
   });
 });

@@ -176,6 +176,7 @@ const parsers: {
   "container": parseContainer,
   "container-name": parseContainerName,
   "container-type": parseContainerType,
+  "cursor": parseCursor,
   "display": parseDisplay,
   "direction": parseDirection,
   "fill": parseSVGPaint,
@@ -277,6 +278,32 @@ const parsers: {
   parsePointerEvents as Parser;
 
 const validProperties = new Set(Object.keys(parsers));
+
+/**
+ * Properties LightningCSS doesn't parse, with the keywords React Native accepts
+ */
+const keywordCustomProperties: Record<string, Set<string>> = {
+  "isolation": new Set(["auto", "isolate"]),
+  "mix-blend-mode": new Set([
+    "normal",
+    "multiply",
+    "screen",
+    "overlay",
+    "darken",
+    "lighten",
+    "color-dodge",
+    "color-burn",
+    "hard-light",
+    "soft-light",
+    "difference",
+    "exclusion",
+    "hue",
+    "saturation",
+    "color",
+    "luminosity",
+    "plus-lighter",
+  ]),
+};
 
 export function parseDeclaration(
   declaration: Declaration,
@@ -1017,6 +1044,18 @@ export function parseCustomDeclaration(
     );
   } else if (property === "corner-shape") {
     parseCornerShape(declaration.value, builder);
+  } else if (property in keywordCustomProperties) {
+    const value = parseUnparsed(declaration.value.value, builder, property);
+
+    if (
+      typeof value === "string" &&
+      !keywordCustomProperties[property]?.has(value)
+    ) {
+      builder.setWarningProperty(property);
+      builder.addWarning("value", value);
+    } else {
+      builder.addDescriptor(property, value);
+    }
   } else if (property === "font-variant") {
     const parsedFontVariant = parseFontVariantCaps(
       parseUnparsed(
@@ -2643,7 +2682,7 @@ export function parseDimensionPercentageFor_LengthValue(
   }
 }
 
-const allowAutoProperties = new Set(["pointer-events"]);
+const allowAutoProperties = new Set(["isolation", "pointer-events"]);
 
 export function parseEnv(
   value: EnvironmentVariable,
@@ -3524,6 +3563,19 @@ function parseObjectPosition(
     "join",
     [parseUnparsed(declaration.value, builder, "object-position"), " "],
   ]);
+}
+
+function parseCursor(
+  declaration: DeclarationType<"cursor">,
+  builder: StylesheetBuilder,
+) {
+  const { images, keyword } = declaration.value;
+
+  if (images.length === 0 && (keyword === "auto" || keyword === "pointer")) {
+    builder.addDescriptor("cursor", keyword);
+  } else {
+    builder.addWarning("value", keyword);
+  }
 }
 
 function parseCornerShape(

@@ -74,3 +74,17 @@ test.each([
     properties: [declaration.split(":")[0]],
   });
 });
+
+test.each([
+  ["mix-blend-mode: plus-darker;", { "mix-blend-mode": ["plus-darker"] }],
+  ["isolation: separate;", { isolation: ["separate"] }],
+  ["cursor: grab;", { cursor: ["grab"] }],
+])(
+  "%s warns for values React Native does not support",
+  (declaration, values) => {
+    const compiled = compileWithAutoDebug(`.my-class { ${declaration} }`);
+
+    expect(compiled.stylesheet()).toStrictEqual({});
+    expect(compiled.warnings()).toStrictEqual({ values });
+  },
+);

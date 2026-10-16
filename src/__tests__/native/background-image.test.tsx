@@ -16,7 +16,7 @@ describe("background-image: linear-gradient()", () => {
     const component = screen.getByTestId(testID);
 
     expect(component.props.style).toStrictEqual({
-      experimental_backgroundImage: [expected],
+      backgroundImage: [expected],
     });
   });
 });
@@ -46,7 +46,7 @@ describe("background-image: radial-gradient()", () => {
     const component = screen.getByTestId(testID);
 
     expect(component.props.style).toStrictEqual({
-      experimental_backgroundImage: [expected],
+      backgroundImage: [expected],
     });
   });
 
@@ -59,7 +59,7 @@ describe("background-image: radial-gradient()", () => {
     const component = screen.getByTestId(testID);
 
     expect(component.props.style).toStrictEqual({
-      experimental_backgroundImage: [],
+      backgroundImage: [],
     });
   });
 });

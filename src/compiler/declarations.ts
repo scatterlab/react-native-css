@@ -65,7 +65,6 @@ type Parser<T extends Declaration["property"] = Declaration["property"]> = (
 ) => StyleDescriptor | void;
 
 const propertyRename: Record<string, string> = {
-  "background-image": "experimental_backgroundImage",
   "font-variant-caps": "font-variant",
 };
 
@@ -3205,7 +3204,7 @@ function parseBackgroundImage(
   builder: StylesheetBuilder,
 ) {
   builder.addDescriptor(
-    "experimental_backgroundImage",
+    "background-image",
     declaration.value.flatMap((image): StyleDescriptor[] => {
       switch (image.type) {
         case "gradient": {

@@ -179,7 +179,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage: ["none"],
+          backgroundImage: ["none"],
         },
       },
     });
@@ -192,7 +192,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to top, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -206,7 +206,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to top right, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -220,7 +220,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to right, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -234,7 +234,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to bottom right, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -248,7 +248,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to bottom, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -262,7 +262,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to bottom left, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -276,7 +276,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to left, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -290,7 +290,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          experimental_backgroundImage:
+          backgroundImage:
             "linear-gradient(to top left, #fb2c36 0%, #2b7fff 100%)",
         },
       },
@@ -325,9 +325,9 @@ describe("Backgrounds - Background Image", () => {
       "bg-radial from-red-500 to-blue-500",
       "radial-gradient(#fb2c36 0%, #2b7fff 100%)",
     ],
-  ])("%s", async (className, experimental_backgroundImage) => {
+  ])("%s", async (className, backgroundImage) => {
     expect(await renderSimple({ className })).toStrictEqual({
-      props: { style: { experimental_backgroundImage } },
+      props: { style: { backgroundImage } },
     });
   });
 });

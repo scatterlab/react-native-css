@@ -3272,8 +3272,8 @@ function transformOriginComponent(
  * React Native parses background-size/position/repeat from CSS strings, but only
  * accepts `px` and `%` units, so lengths are serialized at compile time.
  *
- * The `experimental_` keys are used because React Native 0.83-0.87 only accept
- * those, and 0.88 keeps them as aliases of the unprefixed keys.
+ * The unprefixed keys require React Native 0.88+; the `experimental_` keys are
+ * deprecated aliases there.
  */
 function parseBackgroundSize(
   declaration: DeclarationType<"background-size">,
@@ -3292,7 +3292,7 @@ function parseBackgroundSize(
     }
   });
 
-  addBackgroundLayers("experimental_backgroundSize", layers, builder);
+  addBackgroundLayers("backgroundSize", layers, builder);
 }
 
 function parseBackgroundPosition(
@@ -3300,7 +3300,7 @@ function parseBackgroundPosition(
   builder: StylesheetBuilder,
 ) {
   addBackgroundLayers(
-    "experimental_backgroundPosition",
+    "backgroundPosition",
     declaration.value.map((position) => positionToCss(position, builder)),
     builder,
   );
@@ -3311,7 +3311,7 @@ function parseBackgroundRepeat(
   builder: StylesheetBuilder,
 ) {
   addBackgroundLayers(
-    "experimental_backgroundRepeat",
+    "backgroundRepeat",
     declaration.value.map(({ x, y }) => {
       if (x === y) {
         return x;

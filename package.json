@@ -1,6 +1,6 @@
 {
   "name": "@scatterlab/react-native-css",
-  "version": "3.0.7-zeta.7",
+  "version": "3.0.7-zeta.8",
   "description": "Use CSS stylesheets in React Native",
   "exports": {
     ".": {
@@ -227,7 +227,7 @@
     "@expo/metro-config": ">=54",
     "lightningcss": ">=1.27.0",
     "react": ">=19",
-    "react-native": ">=0.87"
+    "react-native": ">=0.88"
   },
   "devDependencies": {
     "@babel/core": "^7.28.0",

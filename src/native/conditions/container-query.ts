@@ -13,8 +13,6 @@ import {
   containerWidthFamily,
   focusFamily,
   hoverFamily,
-  containerAttributesFamily,
-  getContainerAttributes,
   type ContainerContextValue,
   type Getter,
 } from "../reactivity";
@@ -49,23 +47,17 @@ export function testContainerQuery(
     return false;
   }
 
-  if (query.a) {
-    // The value is read straight from the container's snapshot; this subscription is what makes
-    // a later change to it reach us (see the reactivity module for why the two are split).
-    get(containerAttributesFamily(container));
-
-    // Guards go into a throwaway array on purpose: `testGuards` compares an "a" guard against
-    // *this* component's props, so mixing the container's attributes in would invert it.
-    if (!testAttributes(query.a, getContainerAttributes(container), [])) {
-      return false;
-    }
-  }
-
-  if (query.m && !testContainerMediaCondition(query.m, container, get)) {
+  // Ancestor snapshots have their own context guard. Their attributes must not
+  // be compared with this descendant's props by the ordinary attribute guards.
+  if (query.a && !testAttributes(query.a, container.props, [])) {
     return false;
   }
 
-  if (query.p && !testContainerPseudoCondition(query.p, container, get)) {
+  if (query.m && !testContainerMediaCondition(query.m, container.key, get)) {
+    return false;
+  }
+
+  if (query.p && !testContainerPseudoCondition(query.p, container.key, get)) {
     return false;
   }
 
@@ -129,11 +121,11 @@ function testContainerMediaCondition(
         case ">":
           return left > right;
         case ">=":
-          return left > right;
+          return left >= right;
         case "<":
-          return left > right;
+          return left < right;
         case "<=":
-          return left > right;
+          return left <= right;
         default:
           condition[0] satisfies never;
           return false;

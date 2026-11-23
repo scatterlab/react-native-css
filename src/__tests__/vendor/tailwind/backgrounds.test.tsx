@@ -179,7 +179,7 @@ describe("Backgrounds - Background Image", () => {
     ).toStrictEqual({
       props: {
         style: {
-          backgroundImage: ["none"],
+          backgroundImage: "none",
         },
       },
     });

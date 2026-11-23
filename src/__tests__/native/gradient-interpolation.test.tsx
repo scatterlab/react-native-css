@@ -23,8 +23,7 @@ test.each([
       `.subject { background-image: linear-gradient(${position}, red, blue); }`,
     );
     render(<View testID="subject" className="subject" />);
-    const value =
-      screen.getByTestId("subject").props.style.backgroundImage;
+    const value = screen.getByTestId("subject").props.style.backgroundImage;
 
     const css = expected
       ? `linear-gradient(${expected}, red, blue)`
@@ -44,8 +43,7 @@ test.each([
       `.subject { background-image: radial-gradient(${position}, red, blue); }`,
     );
     render(<View testID="subject" className="subject" />);
-    const value =
-      screen.getByTestId("subject").props.style.backgroundImage;
+    const value = screen.getByTestId("subject").props.style.backgroundImage;
 
     expect(value).toBe(css);
     expect(processBackgroundImage(value)).toHaveLength(1);

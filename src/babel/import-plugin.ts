@@ -1,4 +1,4 @@
-import { resolve } from "path";
+import { basename, dirname, resolve, sep } from "path";
 
 import { type PluginObj } from "@babel/core";
 import type { Statement } from "@babel/types";
@@ -16,6 +16,7 @@ import {
 import {
   handleReactNativeWebIdentifierRequire,
   handleReactNativeWebImport,
+  handleReactNativeWebInteropRequireDefault,
   handleReactNativeWebObjectPatternRequire,
 } from "./react-native-web";
 
@@ -24,10 +25,14 @@ export default function ({
 }: {
   types: BabelTypes;
 }): PluginObj<PluginState> {
-  const processed = new WeakSet();
+  const processed = new WeakSet<Statement>();
 
-  const thisModuleDist = resolve(__dirname, "../../../dist");
-  const thisModuleSrc = resolve(__dirname, "../../../src");
+  const packageRoot = resolve(
+    __dirname,
+    basename(dirname(__dirname)) === "src" ? "../.." : "../../..",
+  );
+  const thisModuleDist = resolve(packageRoot, "dist") + sep;
+  const thisModuleSrc = resolve(packageRoot, "src") + sep;
 
   function isFromThisModule(filename: string): boolean {
     return (
@@ -39,17 +44,19 @@ export default function ({
     name: "Rewrite react-native to react-native-css",
     visitor: {
       ImportDeclaration(path, state): void {
+        const { filename } = state;
+
         if (
-          processed.has(path) ||
+          filename === undefined ||
           processed.has(path.node) ||
-          isFromThisModule(state.filename)
+          isFromThisModule(filename)
         ) {
           return;
         }
 
         const statements =
-          handleReactNativeImport(path.node, t, state.filename) ??
-          handleReactNativeWebImport(path.node, t, state.filename);
+          handleReactNativeImport(path.node, t, filename) ??
+          handleReactNativeWebImport(path.node, t, filename);
 
         if (!statements) {
           return;
@@ -62,10 +69,12 @@ export default function ({
         path.replaceWithMultiple(statements);
       },
       VariableDeclaration(path, state): void {
+        const { filename } = state;
+
         if (
-          processed.has(path) ||
+          filename === undefined ||
           processed.has(path.node) ||
-          isFromThisModule(state.filename)
+          isFromThisModule(filename)
         ) {
           return;
         }
@@ -94,6 +103,11 @@ export default function ({
           return;
         }
 
+        // A local function called require is not the module loader.
+        if (path.scope.getBinding("require")) {
+          return;
+        }
+
         const initArg = init.arguments.at(0);
 
         if (!initArg) {
@@ -114,14 +128,14 @@ export default function ({
               t,
               id.name,
               initArg.value,
-              state.filename,
+              filename,
             ) ??
             handleReactNativeWebIdentifierRequire(
               path,
               t,
               id.name,
               initArg.value,
-              state.filename,
+              filename,
             );
         } else if (
           t.isObjectPattern(id) &&
@@ -134,14 +148,14 @@ export default function ({
               t,
               id,
               initArg.value,
-              state.filename,
+              filename,
             ) ??
             handleReactNativeWebObjectPatternRequire(
               path,
               t,
               id,
               initArg.value,
-              state.filename,
+              filename,
             );
         } else if (
           t.isIdentifier(id) &&
@@ -152,12 +166,13 @@ export default function ({
           if (!source) {
             return;
           }
-          statements = handleReactNativeWebIdentifierRequire(
+          statements = handleReactNativeWebInteropRequireDefault(
             path,
             t,
             id.name,
+            init,
             source,
-            state.filename,
+            filename,
           );
         }
 

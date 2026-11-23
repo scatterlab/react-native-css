@@ -77,71 +77,26 @@ test(":root CSS variables with media queries", () => {
   });
 });
 
-test.skip("removes unused CSS variables", () => {
-  const compiled = compile(`
-    .test { 
-      --blue: blue;
-      --green: green;
-      --red: red;
-      color: var(--red, var(--blue))
-    }
-  `);
-
-  expect(compiled.stylesheet()).toStrictEqual({
-    s: [
-      [
-        "test",
-        [
-          [
-            {
-              s: [1, 1],
-              v: [
-                ["blue", "blue"],
-                ["red", "red"],
-              ],
-              dv: 1,
-              d: [[[{}, "var", ["red", [{}, "var", ["blue"]]]], "color", 1]],
-            },
-          ],
-        ],
-      ],
-    ],
-  });
+test("removes unused CSS variables while preserving the resolved value", () => {
+  const result = compile(
+    `.test { --blue: blue; --green: green; --red: red; color: var(--red, var(--blue)); }`,
+  ).stylesheet();
+  const rule = result.s?.[0]?.[1][0];
+  expect(rule?.d).toContainEqual({ color: "#f00" });
+  expect(
+    rule?.v?.filter(([name]) => ["red", "blue", "green"].includes(name)) ?? [],
+  ).toEqual([]);
 });
 
-test.skip("preserves unused CSS variables with preserve-variables", () => {
-  const compiled = compile(`
-    @react-native config {
-      preserve-variables: --green, --blue;
-    }
-
-    .test { 
-      --green: green;
-      --red: red;
-      color: var(--red)
-    }
-  `);
-
-  expect(compiled.stylesheet()).toStrictEqual({
-    s: [
-      [
-        "test",
-        [
-          [
-            {
-              s: [1, 1],
-              v: [
-                ["green", "green"],
-                ["red", "red"],
-              ],
-              d: [[[{}, "var", ["red"]], "color", 1]],
-              dv: 1,
-            },
-          ],
-        ],
-      ],
-    ],
-  });
+test("preserves excluded CSS variables using the public compiler option", () => {
+  const result = compile(
+    `.test { --green: green; --red: red; color: var(--red); }`,
+    { inlineVariables: { exclude: ["--green"] } },
+  ).stylesheet();
+  const rule = result.s?.[0]?.[1][0];
+  expect(rule?.v).toContainEqual(["green", "green"]);
+  expect(rule?.d).toContainEqual({ color: "#f00" });
+  expect(rule?.v?.some(([name]) => name === "red")).toBe(false);
 });
 
 test("multiple rules with same selector", () => {
@@ -187,107 +142,84 @@ test("multiple rules with same selector", () => {
   });
 });
 
-test.skip("transitions", () => {
-  const compiled = compile(`
-    .test { 
-      color: red;
-      transition: color 1s linear;
-    }
-  `);
-
-  expect(compiled.stylesheet()).toStrictEqual({
-    s: [
-      [
-        "test",
-        [
-          [
-            {
-              d: [
-                {
-                  color: "#ff0000",
-                  transitionDelay: [0],
-                  transitionDuration: [1000],
-                  transitionProperty: ["color"],
-                  transitionTimingFunction: ["linear"],
-                },
-              ],
-              s: [1, 1],
-            },
-          ],
-        ],
-      ],
-    ],
+test("transitions retain duration, property, timing, and the animated rule marker", () => {
+  const rule = compile(
+    `.test { color: red; transition: color 1s linear; }`,
+  ).stylesheet().s?.[0]?.[1][0];
+  expect(rule?.a).toBe(true);
+  expect(rule?.d).toContainEqual({
+    color: "#f00",
+    transitionProperty: ["color"],
+    transitionDuration: [1000],
+    transitionDelay: [0],
+    transitionTimingFunction: "linear",
   });
 });
 
-test.skip("animations", () => {
-  const compiled = compile(`
-    .test { 
-      animation: spin 1s linear infinite;
-    }
-
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
-    }
-  `);
-
-  expect(compiled.stylesheet()).toStrictEqual({
-    k: [
-      [
-        "spin",
-        [
-          {
-            0: { transform: [[{}, "rotate", "0deg"]] },
-            100: { transform: [[{}, "rotate", "360deg"]] },
-          },
-        ],
-      ],
-    ],
-    s: [
-      [
-        "test",
-        [
-          [
-            {
-              a: 1,
-              d: [
-                {
-                  animationDelay: [0],
-                  animationDirection: ["normal"],
-                  animationDuration: [1000],
-                  animationFillMode: ["none"],
-                  animationIterationCount: ["infinite"],
-                  animationName: [[{}, "animation", ["spin"], 1]],
-                  animationPlayState: ["running"],
-                  animationTimingFunction: ["linear"],
-                },
-              ],
-              s: [1, 1],
-            },
-          ],
-        ],
-      ],
-    ],
-  });
-});
-
-test("breaks apart comma separated variables", () => {
-  const compiled = compile(
-    `
-    :root { 
-      --test: blue, green;
-    }
-  `,
-    {
-      inlineVariables: false,
-    },
+test("animations preserve named keyframes and their timing contract", () => {
+  const result = compile(
+    `.test { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`,
+  ).stylesheet();
+  const rule = result.s?.[0]?.[1][0];
+  expect(rule?.a).toBe(true);
+  expect(rule?.d).toContainEqual(
+    expect.objectContaining({
+      animationDuration: [1000],
+      animationIterationCount: ["infinite"],
+      animationTimingFunction: "linear",
+    }),
   );
+  expect(rule?.d).toContainEqual([
+    [[{}, "animationName", ["spin"], 1]],
+    "animationName",
+  ]);
+  expect(result.k).toEqual([
+    [
+      "spin",
+      [["to", [[[{}, "transform", [[{}, "rotate", "360deg"]]], "transform"]]]],
+    ],
+  ]);
+});
+
+// css-variables-1 §2.1: a custom property's value is its tokens, its commas among them
+test.each([
+  ["blue, green", [["blue"], ["green"]]],
+  ["blue ,green", [["blue"], ["green"]]],
+  ["blue/**/, green", [["blue"], ["green"]]],
+  ["blue green", ["blue", "green"]],
+  [
+    "1px 2px #000, 3px 4px #fff",
+    [
+      [1, 2, "#000"],
+      [3, 4, "#fff"],
+    ],
+  ],
+  ["1px 2px #000 3px 4px #fff", [1, 2, "#000", 3, 4, "#fff"]],
+])("--test: %s keeps its separator", (value, expected) => {
+  const compiled = compile(`:root { --test: ${value}; }`, {
+    inlineVariables: false,
+  });
 
   expect(compiled.stylesheet()).toStrictEqual({
-    vr: [["test", [[["blue", "green"]]]]],
+    vr: [["test", [[expected]]]],
   });
+});
+
+test.each([
+  ["var(--a), var(--b)", [[[{}, "var", "a", 1]], [[{}, "var", "b", 1]]]],
+  [
+    "var(--a) var(--b)",
+    [
+      [{}, "var", "a", 1],
+      [{}, "var", "b", 1],
+    ],
+  ],
+])("box-shadow: %s keeps its separator", (value, expected) => {
+  const compiled = compile(`.my-class { box-shadow: ${value}; }`);
+
+  expect(compiled.stylesheet().s?.[0]?.[1][0]?.d).toStrictEqual([
+    [[{}, "boxShadow", expected, 1], "boxShadow", 1],
+  ]);
 });
 
 test("light-dark()", () => {
@@ -381,6 +313,31 @@ test("media query nested in rules", () => {
   });
 });
 
+test.each([
+  ["@media", "@media (min-width: 0px) { color: blue; }"],
+  ["@container", "@container (min-width: 0px) { color: blue; }"],
+  ["&:hover", "&:hover { color: blue; }"],
+])(
+  "a %s rule nested in a descendant selector applies to that selector's subject",
+  (_kind, nested) => {
+    const stylesheet = compile(
+      `.group .x { color: red; ${nested} }`,
+    ).stylesheet();
+    const rules = (name: string) =>
+      stylesheet.s?.find(([className]) => className === name)?.[1] ?? [];
+
+    expect(rules("x").map((rule) => rule.d)).toStrictEqual([
+      [{ color: "#f00" }],
+      [{ color: "#00f" }],
+    ]);
+    for (const rule of rules("x")) {
+      expect(rule.cq).toContainEqual({ n: "g:group" });
+    }
+    expect(rules("x").flatMap((rule) => rule.c ?? [])).toStrictEqual([]);
+    expect(rules("group").flatMap((rule) => rule.d ?? [])).toStrictEqual([]);
+  },
+);
+
 test("container queries", () => {
   const compiled = compile(`
   @container (width > 400px) {
@@ -421,6 +378,48 @@ test("warnings", () => {
     values: {
       "z-index": ["auto"],
       "color": ["random()"],
+    },
+  });
+});
+
+test("a transform value the compiler cannot convert is ignored, with a warning", () => {
+  const compiled = compile(`
+.my-class {
+    transform: translate(10px, 1cap);
+    rotate: 1grad;
+    scale: 2;
+}
+.alone {
+    translate: calc(1em + 5px) 5px;
+}`);
+
+  expect(compiled.stylesheet()).toStrictEqual({
+    s: [
+      [
+        "my-class",
+        [
+          {
+            d: [
+              [
+                [
+                  [{}, "scaleX", 2],
+                  [{}, "scaleY", 2],
+                ],
+                "scale",
+              ],
+            ],
+            s: [1, 1],
+          },
+        ],
+      ],
+    ],
+  });
+
+  expect(compiled.warnings()).toStrictEqual({
+    values: {
+      transform: ["1cap"],
+      translate: ["calc()"],
+      rotate: ["1 grad"],
     },
   });
 });

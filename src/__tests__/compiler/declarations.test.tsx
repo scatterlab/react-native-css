@@ -12,7 +12,7 @@ const tests = [
   ["background-repeat: space round, no-repeat;", [{ d: [{ backgroundRepeat: "space round, no-repeat" }], s: [1, 1] }]],
   ["background-size: 10px 50%;", [{ d: [{ backgroundSize: "10px 50%" }], s: [1, 1] }]],
   ["background-size: cover, 20px auto;", [{ d: [{ backgroundSize: "cover, 20px auto" }], s: [1, 1] }]],
-  ["caret-color: black",[{ d: [["#000", ["cursorColor"]]], s: [1, 1] }]],
+  ["caret-color: black", [{ d: [["#000", ["cursorColor"]]], s: [1, 1] }]],
   ["font-variation-settings: 'wght' 600, \"wdth\" 80.5;", [{ d: [{ fontVariationSettings: "'wght' 600, 'wdth' 80.5" }], s: [1, 1] }]],
   ["font-variation-settings: normal;", [{ d: [{ fontVariationSettings: "normal" }], s: [1, 1] }]],
   ["fill: black;", [{ d: [["#000", ["fill"]]], s: [1, 1] }]],

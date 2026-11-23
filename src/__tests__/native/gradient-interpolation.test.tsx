@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react-native";
+import { VariableContextProvider } from "react-native-css";
 import { View } from "react-native-css/components";
 import { registerCSS } from "react-native-css/jest";
 
@@ -49,3 +50,16 @@ test.each([
     expect(processBackgroundImage(value)).toHaveLength(1);
   },
 );
+
+test("a gradient whose arguments come from one variable drops the color interpolation method", () => {
+  registerCSS(`.a { background-image: linear-gradient(var(--g)); }`);
+  render(
+    <VariableContextProvider value={{ "--g": "to right in oklab, red, blue" }}>
+      <View testID="subject" className="a" />
+    </VariableContextProvider>,
+  );
+
+  expect(screen.getByTestId("subject").props.style.backgroundImage).toBe(
+    "linear-gradient(to right, red, blue)",
+  );
+});

@@ -148,6 +148,11 @@ export function resolveValue(
           }
 
           value = `${name}(${joinedArgs})`;
+        } else if (
+          typeof args === "string" &&
+          (name === "linear-gradient" || name === "radial-gradient")
+        ) {
+          value = `${name}(${removeColorInterpolationMethod(args)})`;
         } else {
           value = `${name}(${args})`;
         }

@@ -26,7 +26,7 @@ describe("Transforms - Scale", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          transform: [{ scale: "0%" }],
+          transform: [{ scaleX: 0 }, { scaleY: 0 }],
         },
       },
     });
@@ -35,7 +35,7 @@ describe("Transforms - Scale", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          transform: [{ scaleX: "50%" }, { scaleY: 1 }],
+          transform: [{ scaleX: 0.5 }, { scaleY: 1 }],
         },
       },
     });
@@ -44,7 +44,7 @@ describe("Transforms - Scale", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          transform: [{ scaleX: 1 }, { scaleY: "50%" }],
+          transform: [{ scaleX: 1 }, { scaleY: 0.5 }],
         },
       },
     });
@@ -53,7 +53,7 @@ describe("Transforms - Scale", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          transform: [{ scale: "50%" }],
+          transform: [{ scaleX: 0.5 }, { scaleY: 0.5 }],
         },
       },
     });
@@ -233,11 +233,12 @@ describe("Transforms - Mixed", () => {
     ).toStrictEqual({
       props: {
         style: {
+          // css-transforms-2 §6: translate, then rotate, then the transform list
           transform: [
-            { skewY: "1deg" },
             { translateX: 3.5 },
             { translateY: 0 },
             { rotateZ: "90deg" },
+            { skewY: "1deg" },
           ],
         },
       },

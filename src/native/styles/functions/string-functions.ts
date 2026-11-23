@@ -1,14 +1,34 @@
+import { isStyleDescriptorArray } from "react-native-css/utilities";
+
 import type { StyleFunctionResolver } from "../resolve";
 
-export const join: StyleFunctionResolver = (resolveValue, value) => {
-  const args = resolveValue(value[2]);
+export const gradientPosition: StyleFunctionResolver = (
+  resolveValue,
+  value,
+) => {
+  const position = resolveValue(value[2]);
+  return typeof position === "number" ? `${position}px` : position;
+};
 
-  if (!Array.isArray(args)) {
-    return args;
+export const colorStop: StyleFunctionResolver = (resolveValue, value) => {
+  const args = resolveValue(value[2]);
+  if (!Array.isArray(args)) return args;
+  const [color, position] = args as unknown[];
+  if (typeof color !== "string") return;
+  if (position === undefined) return color;
+  if (typeof position !== "number" && typeof position !== "string") return;
+  return `${color} ${typeof position === "number" ? `${position}px` : position}`;
+};
+
+export const join: StyleFunctionResolver = (resolveValue, value) => {
+  const args = value[2];
+
+  if (!isStyleDescriptorArray(args)) {
+    return resolveValue(args);
   }
 
-  const array: unknown = args[0];
-  const separator: unknown = args[1] ?? ",";
+  const array: unknown = resolveValue(args[0]);
+  const separator: unknown = resolveValue(args[1]) ?? ",";
 
   if (!Array.isArray(array)) {
     return array;

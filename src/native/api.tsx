@@ -1,21 +1,25 @@
 /* eslint-disable  */
-import { useContext, useState, type ComponentType } from "react";
-import { Appearance } from "react-native";
+import { useContext, useEffect, useState, type ComponentType } from "react";
+import { Appearance, type ViewStyle } from "react-native";
 
 import type { StyleDescriptor } from "react-native-css/compiler";
 import { VariableContext } from "react-native-css/native-internal";
+import { commaListItems } from "react-native-css/utilities";
 
 import type {
   ColorScheme,
   Props,
   ReactComponent,
+  Styled,
   StyledConfiguration,
   StyledOptions,
 } from "../runtime.types";
 import { mappingToConfig, useNativeCss } from "./react/useNativeCss";
 import { usePassthrough } from "./react/usePassthrough";
 import {
+  cleanupEffect,
   colorScheme as colorSchemeObs,
+  toVariableRecord,
   VAR_SYMBOL,
   type Effect,
   type Getter,
@@ -40,12 +44,9 @@ const defaultMapping: StyledConfiguration<ComponentType<{ style: unknown }>> = {
  * @param baseComponent
  * @param mapping
  */
-export const styled = <
-  const C extends ReactComponent<any>,
-  const M extends StyledConfiguration<C>,
->(
-  baseComponent: C,
-  mapping: M = defaultMapping as M,
+export const styled: Styled = (
+  baseComponent: ReactComponent<any>,
+  mapping: StyledConfiguration<any> = defaultMapping,
   options?: StyledOptions,
 ) => {
   let component: any;
@@ -73,7 +74,7 @@ export const colorScheme: ColorScheme = {
     return colorSchemeObs.get() ?? Appearance.getColorScheme() ?? "light";
   },
   set(value) {
-    return colorSchemeObs.set(value);
+    return colorSchemeObs.set(value === "unspecified" ? null : value);
   },
 };
 
@@ -97,28 +98,35 @@ export function useNativeVariable(name: string) {
   }
 
   const inheritedVariables = useContext(VariableContext);
-  const [effect, setState] = useState(() => {
+  const [, forceUpdate] = useState(0);
+  const [effect] = useState(() => {
     const effect: Effect = {
       observers: new Set(),
-      run: () => setState((state) => ({ ...state })),
+      run: () => forceUpdate((state) => state + 1),
     };
 
     const get: Getter = (observable) => observable.get(effect);
 
-    return { ...effect, get };
+    return Object.assign(effect, { get });
   });
 
-  return resolveValue([{}, "var", [name]], effect.get, { inheritedVariables });
+  useEffect(() => {
+    // React StrictMode replays setup after cleanup without another render.
+    if (effect.observers.size === 0) forceUpdate((state) => state + 1);
+    return () => cleanupEffect(effect);
+  }, [effect]);
+  cleanupEffect(effect);
+  return commaListItems(
+    resolveValue([{}, "var", [name]], effect.get, { inheritedVariables }),
+  );
 }
 
 /**
  * @deprecated Use `<VariableContextProvider />` instead.
  */
-export function vars(variables: Record<string, StyleDescriptor>) {
+export function vars(variables: Record<string, StyleDescriptor>): ViewStyle {
   return Object.assign(
     { [VAR_SYMBOL]: "inline" },
-    Object.fromEntries(
-      Object.entries(variables).map(([k, v]) => [k.replace(/^--/, ""), v]),
-    ),
-  );
+    toVariableRecord(variables),
+  ) as ViewStyle;
 }

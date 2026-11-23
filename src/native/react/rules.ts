@@ -8,6 +8,7 @@ import type { RenderGuard } from "../conditions/guards";
 import { getDeepPath } from "../objects";
 import {
   activeFamily,
+  cleanupEffect,
   containerLayoutFamily,
   focusFamily,
   hoverFamily,
@@ -17,6 +18,7 @@ import {
   type VariableContextValue,
 } from "../reactivity";
 import { stylesFamily } from "../styles";
+import { substituteOwnReferences } from "../styles/variables";
 import type { ComponentState, Config } from "./useNativeCss";
 
 export const INLINE_RULE_SYMBOL = Symbol("react-native-css.inlineRule");
@@ -30,6 +32,7 @@ export function updateRules(
   forceUpdate = false,
   isRerender = true,
 ): ComponentState {
+  cleanupEffect(state.ruleEffect);
   const guards: RenderGuard[] = [];
   const rules = new Set<StyleRule | InlineVariable | VariableContextValue>();
   if (forceUpdate) {
@@ -39,6 +42,8 @@ export function updateRules(
   let usesVariables = false;
 
   let variables: VariableContextValue | undefined;
+  let ruleVariableNames: Set<string> | undefined;
+  let publishedChanged = false;
   let containers: ContainerContextValue | undefined;
   const inlineVariables = new Set<InlineVariable>();
 
@@ -133,8 +138,10 @@ export function updateRules(
           variables = { ...inheritedVariables };
         }
 
+        ruleVariableNames ??= new Set();
         for (const v of rule.v) {
           variables![v[0]] = v[1];
+          ruleVariableNames.add(v[0]);
         }
       }
 
@@ -144,13 +151,19 @@ export function updateRules(
           containers = {
             ...inheritedContainers,
             // This container becomes the default container
-            [DEFAULT_CONTAINER_NAME]: state.ruleEffectGetter,
+            [DEFAULT_CONTAINER_NAME]: {
+              key: state.ruleEffectGetter,
+              props: currentProps,
+            },
           };
         }
 
         // This this component as the named container
         for (const name of rule.c) {
-          containers![name] = state.ruleEffectGetter;
+          containers![name] = {
+            key: state.ruleEffectGetter,
+            props: currentProps,
+          };
         }
 
         // Enable hover/active/focus/layout handlers
@@ -212,16 +225,26 @@ export function updateRules(
     };
   }
 
-  if (usesVariables || variables) {
+  if (usesVariables || variables || inlineVariables.size) {
     rules.add(inheritedVariables);
 
     if (inlineVariables.size) {
       variables = Object.assign(
         {},
-        variables,
         inheritedVariables,
+        variables,
         ...Array.from(inlineVariables),
         { [VAR_SYMBOL]: true },
+      );
+    }
+
+    if (variables && ruleVariableNames) {
+      publishedChanged = substituteOwnReferences(
+        variables,
+        ruleVariableNames,
+        inlineVariables,
+        state.variables,
+        state.ruleEffectGetter,
       );
     }
 
@@ -238,12 +261,16 @@ export function updateRules(
   guards.push(...stylesObs.get().guards);
 
   // If these are the same styles with no inline variables, we can skip the update
-  if (state.stylesObs === stylesObs && !inlineVariables.size) {
+  if (
+    state.stylesObs === stylesObs &&
+    !inlineVariables.size &&
+    !publishedChanged
+  ) {
     return state;
   }
 
   // Remove this component from the old observer
-  state.stylesObs?.cleanup(state.ruleEffect);
+  state.stylesObs?.unsubscribe(state.styleEffect);
 
   return {
     ...state,
@@ -282,55 +309,41 @@ function pushInlineRule(
 }
 
 /**
- * Get a unique number for a weak key.
+ * Get a unique number for a weak key. Starts at 1, since `mix32(0)` is 0.
  */
-let hashKeyCount = 0;
+let hashKeyCount = 1;
 const hashKeyFamily = weakFamily(() => hashKeyCount++);
 
 export function generateStateHash(
   state: ComponentState,
-  iterableKeys?: Iterable<WeakKey>,
-  variables?: WeakKey,
-  inlineVars?: Set<WeakKey>,
-): string {
-  if (!iterableKeys) {
-    return "";
-  }
+  iterableKeys: Iterable<WeakKey>,
+): number {
+  return generateHash([state.configs, ...iterableKeys]);
+}
 
-  const keys = [state.configs, ...iterableKeys];
-
-  if (variables) {
-    keys.push(variables);
-  }
-
-  if (inlineVars) {
-    keys.push(...inlineVars);
-  }
-
-  return generateHash(keys);
+// Murmur3's 32-bit finalizer, so neighbouring ids give unrelated values
+function mix32(x: number) {
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x85ebca6b);
+  x ^= x >>> 13;
+  x = Math.imul(x, 0xc2b2ae35);
+  x ^= x >>> 16;
+  return x;
 }
 
 /**
- * Quickly generate a unique hash for a set of numbers.
- * This is not a cryptographic hash, but it is fast and has a low chance of collision.
+ * Hash a set of weak keys into a 53-bit integer. Each id is mixed into two 32-bit values summed
+ * across the set, so the hash is order-independent without a sort. A collision would hand one
+ * element another's styles, but at 53 bits the odds are about n² / 2^54 for n live entries.
  */
-const MOD = 9007199254740871; // Largest prime within safe integer range 2^53
-const PRIME = 31; // A smaller prime for mixing
-export function generateHash(keys: WeakKey[]): string {
-  let hash = 0;
-  let product = 1; // Used for mixing to enhance uniqueness
-
+export function generateHash(keys: WeakKey[]): number {
+  let a = 0;
+  let b = 0;
   for (const key of keys) {
-    if (!key) continue; // Skip if key is undefined
-
-    const num = hashKeyFamily(key);
-    hash = (hash ^ num) % MOD; // XOR and modular arithmetic
-    product = (product * (num + PRIME)) % MOD; // Mix with multiplication
+    const h = mix32(hashKeyFamily(key));
+    a = (a + h) | 0;
+    b = (b + mix32(h ^ 0x9e3779b9)) | 0;
   }
-
-  // Combine hash and product to form the final hash
-  hash = (hash + product) % MOD;
-
-  // Return the hash as a string
-  return hash.toString(36);
+  // 32 bits of `a` and the top 21 of `b`: 53 bits, exactly representable as a number.
+  return (a >>> 0) * 0x200000 + (b >>> 11);
 }

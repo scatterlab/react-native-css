@@ -1,8 +1,11 @@
 import { View as RNView, StyleSheet } from "react-native";
 
 import { render } from "@testing-library/react-native";
+import { ActivityIndicator } from "react-native-css/components/ActivityIndicator";
 import { copyComponentProperties } from "react-native-css/components/copyComponentProperties";
 import { FlatList } from "react-native-css/components/FlatList";
+import { ImageBackground } from "react-native-css/components/ImageBackground";
+import { KeyboardAvoidingView } from "react-native-css/components/KeyboardAvoidingView";
 import { ScrollView } from "react-native-css/components/ScrollView";
 import { Text } from "react-native-css/components/Text";
 import { TextInput } from "react-native-css/components/TextInput";
@@ -533,6 +536,43 @@ describe("multi-config: inline style should not destroy className styles on othe
 });
 
 describe("string target (TextInput, ActivityIndicator, ...)", () => {
+  const DefaultConfigView = copyComponentProperties(
+    RNView,
+    (
+      props: StyledProps<
+        React.ComponentProps<typeof RNView>,
+        StyledConfiguration<typeof RNView>
+      >,
+    ) => useCssElement(RNView, props, { className: "style" }),
+  );
+
+  test.each([
+    ["ActivityIndicator", ActivityIndicator],
+    ["ImageBackground", ImageBackground],
+    ["KeyboardAvoidingView", KeyboardAvoidingView],
+    ["default config", DefaultConfigView],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ] as [string, React.ComponentType<any>][])(
+    "%s: an all-undefined inline style keeps className styles",
+    (_, Component) => {
+      registerCSS(`.box { width: 10px; height: 20px; }`);
+
+      const component = render(
+        <Component
+          testID={testID}
+          className="box"
+          style={{ width: undefined, height: undefined }}
+        />,
+      ).getByTestId(testID);
+
+      // ImageBackground's testID lands on its absolutely filled image, which adds the fill keys
+      expect(StyleSheet.flatten(component.props.style)).toMatchObject({
+        width: 10,
+        height: 20,
+      });
+    },
+  );
+
   test("inline style whose values are all undefined must not drop className styles", () => {
     registerCSS(`.body1 { font-size: 15px; color: #E5E7EB; }`);
 

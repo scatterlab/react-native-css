@@ -4,8 +4,10 @@ import { versions } from "node:process";
 import type { MetroConfig } from "metro-config";
 
 import { type CompilerOptions } from "../compiler";
+import { getCacheVersion } from "./cache-version";
 import { nativeResolver, webResolver } from "./resolver";
 import { setupTypeScript } from "./typescript";
+import type { WarningLevel } from "./warnings";
 
 export interface WithReactNativeCSSOptions extends CompilerOptions {
   /* Specify the path to the TypeScript environment file. Defaults types-env.d.ts */
@@ -15,7 +17,11 @@ export interface WithReactNativeCSSOptions extends CompilerOptions {
   /** Add className to all React Native primitives. Defaults false */
   globalClassNamePolyfill?: boolean;
   hexColors?: boolean;
+  /** How native builds print the compiler's warnings. Defaults "summary" */
+  warnings?: WarningLevel;
 }
+
+export type { WarningLevel } from "./warnings";
 
 const metroOverrideResolution = {
   type: "sourceFile",
@@ -47,6 +53,7 @@ export function withReactNativeCSS<
 
   return {
     ...config,
+    cacheVersion: getCacheVersion(config.cacheVersion, options),
     transformerPath: require.resolve("./metro-transformer"),
     transformer: {
       ...config.transformer,

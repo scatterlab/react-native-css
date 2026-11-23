@@ -1,6 +1,7 @@
 /* eslint-disable */
+import { commaListItems } from "react-native-css/utilities";
+
 import { ShortHandSymbol } from "../native/styles/constants";
-import { transformKeys } from "../native/styles/defaults";
 
 export function getDeepPath(source: any, paths: string | string[] | false) {
   if (!source) {
@@ -23,10 +24,6 @@ export function getDeepPath(source: any, paths: string | string[] | false) {
     }
 
     return target;
-  } else if (transformKeys.has(paths)) {
-    return Array.isArray(source?.transform)
-      ? source.transform.find((t: any) => t[paths] !== undefined)
-      : source.transform;
   } else {
     return source?.[paths];
   }
@@ -62,26 +59,19 @@ export function applyValue(
     value = undefined;
   }
 
-  if (transformKeys.has(prop)) {
-    if (!Array.isArray(target.transform)) {
-      target.transform = [];
+  if (typeof value === "object" && value) {
+    if (ShortHandSymbol in value) {
+      delete value[ShortHandSymbol];
+      Object.assign(target, value);
+      return;
     }
 
-    const transformArray: Record<string, unknown>[] = target.transform;
-
-    // Remove any existing values
-    target.transform = transformArray.filter((t) => !(prop in t));
-
-    if (Array.isArray(value)) {
-      target.transform.push(...value);
-    } else {
-      target.transform.push(value);
+    // React Native's list props take a comma-separated list with one-token
+    // items bare. Tested only here, for objects, so a string or number pays
+    // nothing for it: applyValue runs for every dynamic declaration.
+    if (Array.isArray(value[0])) {
+      value = commaListItems(value);
     }
-    return;
-  } else if (typeof value === "object" && value && ShortHandSymbol in value) {
-    delete value[ShortHandSymbol];
-    Object.assign(target, value);
-    return;
   }
 
   target[prop] = value;

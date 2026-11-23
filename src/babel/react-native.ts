@@ -1,5 +1,3 @@
-import { dirname, resolve } from "path";
-
 import { type NodePath } from "@babel/traverse";
 import tBabelTypes, {
   type ImportDeclaration,
@@ -9,12 +7,13 @@ import tBabelTypes, {
 } from "@babel/types";
 
 import { allowedModules } from "./allowedModules";
+import { resolveImportSource } from "./helpers";
 
 type BabelTypes = typeof tBabelTypes;
 
 function parseReactNativeSource(source: string, filename: string) {
   if (source.startsWith(".")) {
-    source = resolve(dirname(filename), source);
+    source = resolveImportSource(filename, source);
 
     const internalPath = source.split("react-native/Libraries/Components/")[1];
     if (!internalPath) {
@@ -48,6 +47,7 @@ export function handleReactNativeImport(
   filename: string,
 ): Statement[] | undefined {
   const { specifiers, source } = declaration;
+  if (declaration.importKind && declaration.importKind !== "value") return;
 
   const rnwSource = parseReactNativeSource(source.value, filename);
   if (!rnwSource) {
@@ -76,7 +76,7 @@ export function handleReactNativeImport(
       } else {
         statements.push(
           t.importDeclaration(
-            [t.importSpecifier(specifier.local, specifier.local)],
+            [t.importSpecifier(specifier.local, t.identifier(name))],
             t.stringLiteral(`react-native-css/components/${name}`),
           ),
         );
@@ -89,6 +89,10 @@ export function handleReactNativeImport(
         ),
       );
     } else {
+      if (specifier.importKind && specifier.importKind !== "value") {
+        statements.push(t.importDeclaration([specifier], source));
+        continue;
+      }
       const localName = t.isStringLiteral(specifier.imported)
         ? specifier.imported.value
         : specifier.imported.name;
@@ -180,6 +184,7 @@ export function handleReactNativeObjectPatternRequire(
       // We need to exit as we do not handle `const { Text, ...rest } = require('react-native');`
       return;
     } else if (
+      identifier.computed ||
       !(t.isIdentifier(identifier.value) && t.isIdentifier(identifier.key))
     ) {
       // Bail out on anything that isn't `const { <key>: <identifier> } = require('react-native');`

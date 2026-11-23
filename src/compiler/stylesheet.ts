@@ -9,8 +9,10 @@ import type {
   AnimationKeyframes,
   AnimationRecord,
   CompilerOptions,
+  CompilerWarnings,
   ContainerQuery,
   MediaCondition,
+  PropertyRegistration,
   ReactNativeCssStyleSheet,
   StyleDeclaration,
   StyleDescriptor,
@@ -58,18 +60,21 @@ export class StylesheetBuilder {
     },
     // Any default mapping should be included in the @nativeMapping parsing
     private mapping: StyleRuleMapping = {},
-    public descriptorProperty?: string,
+    // Every property the declaration being parsed writes, so an unnamed descriptor such as a light-dark() dark half reaches each
+    public descriptorProperties?: readonly string[],
     private shared: {
       ruleSets: Record<string, StyleRuleSet>;
       rootVariables?: VariableRecord;
       universalVariables?: VariableRecord;
+      propertyRegistrations?: Record<string, PropertyRegistration>;
       animations?: AnimationRecord;
       rem: number;
       ruleOrder: number;
       warningProperty?: string;
       warningProperties: string[];
-      warningValues: Record<string, unknown[]>;
+      warningValues: Record<string, string[]>;
       warningFunctions: string[];
+      syntaxWarnings: Set<string>;
     } = {
       ruleSets: {},
       rem: 14,
@@ -77,6 +82,7 @@ export class StylesheetBuilder {
       warningProperties: [],
       warningValues: {},
       warningFunctions: [],
+      syntaxWarnings: new Set(),
     },
     private selectors: SelectorList = [],
   ) {}
@@ -102,7 +108,7 @@ export class StylesheetBuilder {
       mode,
       this.cloneRule(),
       { ...this.mapping },
-      this.descriptorProperty,
+      this.descriptorProperties,
       this.shared,
       selectors,
     );
@@ -173,6 +179,10 @@ export class StylesheetBuilder {
       );
     }
 
+    if (this.shared.propertyRegistrations) {
+      stylesheetOptions.vp = Object.values(this.shared.propertyRegistrations);
+    }
+
     if (this.shared.animations) {
       stylesheetOptions.k = Object.entries(this.shared.animations);
     }
@@ -198,18 +208,17 @@ export class StylesheetBuilder {
   }
 
   addWarning(type: "property" | "value", property: string): void;
-  addWarning(type: "style", property: string, value: unknown): void;
+  addWarning(type: "style", property: string, value: string): void;
   addWarning(
     type: "property" | "style" | "value",
     property: string,
-    value?: unknown,
+    value: string = property,
   ): void {
     switch (type) {
       case "property":
         this.shared.warningProperties.push(property);
         break;
       case "value": {
-        value = property;
         property = this.shared.warningProperty ?? "";
 
         if (!property) {
@@ -227,12 +236,13 @@ export class StylesheetBuilder {
     }
   }
 
-  getWarnings() {
-    const result: {
-      properties?: string[];
-      values?: Record<string, unknown[]>;
-      functions?: string[];
-    } = {};
+  // A lightningcss message carries no position, so a repeated mistake is one entry
+  addSyntaxWarning(message: string): void {
+    this.shared.syntaxWarnings.add(message);
+  }
+
+  getWarnings(): CompilerWarnings {
+    const result: CompilerWarnings = {};
 
     if (this.shared.warningProperties.length) {
       result.properties = this.shared.warningProperties;
@@ -244,6 +254,10 @@ export class StylesheetBuilder {
 
     if (this.shared.warningFunctions.length) {
       result.functions = this.shared.warningFunctions;
+    }
+
+    if (this.shared.syntaxWarnings.size) {
+      result.syntax = [...this.shared.syntaxWarnings];
     }
 
     return result;
@@ -305,11 +319,13 @@ export class StylesheetBuilder {
     forceTuple?: boolean,
     rule = this.rule,
   ) {
-    if (this.descriptorProperty === undefined) {
+    if (this.descriptorProperties === undefined) {
       return;
     }
 
-    this.addDescriptor(this.descriptorProperty, value, forceTuple, rule);
+    for (const property of this.descriptorProperties) {
+      this.addDescriptor(property, value, forceTuple, rule);
+    }
   }
 
   addDescriptor(
@@ -417,7 +433,7 @@ export class StylesheetBuilder {
       } else {
         declarations.push([value, propPath]);
       }
-    } else if (Array.isArray(value) && value.some(isStyleFunction)) {
+    } else if (Array.isArray(value) && value.some(holdsStyleFunction)) {
       declarations.push([value, propPath]);
     } else if (typeof value === "string" && keywords.has(value)) {
       declarations.push([value, propPath]);
@@ -577,10 +593,16 @@ export class StylesheetBuilder {
     this.ruleTemplate.cq.push(query);
   }
 
-  addRootVariable(name: string, value: StyleDescriptor) {
-    this.shared.rootVariables ??= {};
-    this.shared.rootVariables[name] ??= [];
-    this.shared.rootVariables[name].push([value]);
+  registerProperty(
+    name: string,
+    inherits: boolean,
+    initialValue: StyleDescriptor,
+  ) {
+    this.shared.propertyRegistrations ??= {};
+    this.shared.propertyRegistrations[name] =
+      initialValue === undefined
+        ? [name, inherits]
+        : [name, inherits, initialValue];
   }
 
   newAnimationFrames(name: string) {
@@ -614,6 +636,14 @@ function isStyleFunction(
       value[0] &&
       typeof value[0] === "object" &&
       Object.keys(value[0]).length === 0,
+  );
+}
+
+/** A comma-separated list holds each item as the array of its tokens, so a function may be one of an item's tokens. */
+function holdsStyleFunction(entry: StyleDescriptor): boolean {
+  return (
+    isStyleFunction(entry) ||
+    (Array.isArray(entry) && entry.some(isStyleFunction))
   );
 }
 

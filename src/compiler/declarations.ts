@@ -41,6 +41,7 @@ import type {
 } from "lightningcss";
 
 import { isStyleFunction } from "../utilities";
+import { isMappingProperty } from "./atRules";
 import type {
   StyleDescriptor,
   StyleFunction,
@@ -65,13 +66,54 @@ type Parser<T extends Declaration["property"] = Declaration["property"]> = (
 ) => StyleDescriptor | void;
 
 const propertyRename: Record<string, string> = {
+  // React Native has no border-inline-* props, but ships the equivalent
+  // RTL-aware border-start-* / border-end-* props
+  "border-inline-end-color": "border-end-color",
+  "border-inline-end-width": "border-end-width",
+  "border-inline-start-color": "border-start-color",
+  "border-inline-start-width": "border-start-width",
+  "border-block-start-width": "border-top-width",
+  "border-block-end-width": "border-bottom-width",
   "font-variant-caps": "font-variant",
+  // React Native maps paddingBlock/paddingInline to the same Yoga edges as
+  // paddingVertical/paddingHorizontal, but Android's TextInput only sees the
+  // latter and otherwise keeps its theme padding
+  "padding-block": "padding-vertical",
+  "padding-inline": "padding-horizontal",
 };
+
+// React Native only supports a uniform borderStyle, so per-side border
+// styles have no native equivalent and are dropped. "solid" is dropped
+// silently as it matches React Native's default rendering.
+const unsupportedLogicalStyles = new Set([
+  "border-inline-style",
+  "border-inline-start-style",
+  "border-inline-end-style",
+  "border-block-style",
+  "border-block-start-style",
+  "border-block-end-style",
+]);
+
+// One key set per property, so a later declaration replaces an earlier one; Android and iOS rank borderBlockColor against borderTopColor oppositely
+const blockColorEdges = [
+  "border-top-color",
+  "border-bottom-color",
+] as const satisfies readonly [string, string];
+
+// React Native has no borderInlineColor, so the RTL-aware pair is the inline axis's only target
+const inlineColorEdges = [
+  "border-start-color",
+  "border-end-color",
+] as const satisfies readonly [string, string];
 
 const unparsedRuntimeParsing = new Set([
   "animation",
+  "animation-name",
   "border",
+  "border-block-width",
+  "border-inline-width",
   "box-shadow",
+  "filter",
   "line-height",
   "rotate",
   "scale",
@@ -89,6 +131,12 @@ const compileTimeOnlyProperties = new Set([
   "background-repeat",
   "background-size",
   "transform-origin",
+]);
+
+// css-transforms-2 §3: the translate and scale properties take an optional z, which the functions of the same name do not
+const INDIVIDUAL_TRANSFORM_RESOLVERS: ReadonlyMap<string, string> = new Map([
+  ["scale", "individualScale"],
+  ["translate", "individualTranslate"],
 ]);
 
 const parsers: {
@@ -119,10 +167,11 @@ const parsers: {
   "border-block-color": parseBorderColor,
   "border-block-end": parseBorderBlockEnd,
   "border-block-end-color": parseColorDeclaration,
+  "border-block-end-style": parseBorderInlineStyle,
   "border-block-end-width": parseBorderSideWidthDeclaration,
   "border-block-start": parseBorderBlockStart,
   "border-block-start-color": parseColorDeclaration,
-  "border-block-start-style": parseBorderStyleDeclaration,
+  "border-block-start-style": parseBorderInlineStyle,
   "border-block-start-width": parseBorderSideWidthDeclaration,
   "border-block-style": parseBorderBlockStyle,
   "border-block-width": parseBorderBlockWidth,
@@ -335,7 +384,7 @@ function parseWithParser(declaration: Declaration, builder: StylesheetBuilder) {
   if (declaration.property in parsers) {
     const parser = parsers[declaration.property] as Parser;
 
-    builder.descriptorProperty = declaration.property;
+    builder.descriptorProperties = [declaration.property];
 
     builder.setWarningProperty(declaration.property);
     const value = parser(declaration, builder, declaration.property);
@@ -366,11 +415,11 @@ function parseInsetInline(
   builder: StylesheetBuilder,
 ) {
   builder.addShorthand("inset-inline", {
-    "inset-block-start": parseLengthPercentageOrAuto(
+    "inset-inline-start": parseLengthPercentageOrAuto(
       value.inlineStart,
       builder,
     ),
-    "inset-block-end": parseLengthPercentageOrAuto(value.inlineEnd, builder),
+    "inset-inline-end": parseLengthPercentageOrAuto(value.inlineEnd, builder),
   });
 }
 
@@ -410,6 +459,16 @@ function parseBorderRadius(
   });
 }
 
+// light-dark() addresses its dark half to descriptorProperties, so a parser that expands onto other properties names them
+function parseColorFor(
+  targets: readonly string[],
+  cssColor: CssColor,
+  builder: StylesheetBuilder,
+) {
+  builder.descriptorProperties = targets;
+  return parseColor(cssColor, builder);
+}
+
 function parseBorderColor(
   declaration: DeclarationType<
     "border-color" | "border-block-color" | "border-inline-color"
@@ -424,18 +483,20 @@ function parseBorderColor(
       "border-right-color": parseColor(declaration.value.right, builder),
     });
   } else {
-    const start = parseColor(declaration.value.start, builder);
-    const end = parseColor(declaration.value.end, builder);
+    // Each edge parses its own colour, so a light-dark() component opens its dark rule over the edge it feeds
+    const [startProperty, endProperty] =
+      declaration.property === "border-inline-color"
+        ? inlineColorEdges
+        : blockColorEdges;
 
-    if (start === end) {
-      builder.addDescriptor(declaration.property, start);
-    } else if (declaration.property === "border-block-color") {
-      builder.addDescriptor("border-top-color", start);
-      builder.addDescriptor("border-bottom-color", end);
-    } else {
-      builder.addDescriptor("border-left-color", start);
-      builder.addDescriptor("border-right-color", end);
-    }
+    builder.addDescriptor(
+      startProperty,
+      parseColorFor([startProperty], declaration.value.start, builder),
+    );
+    builder.addDescriptor(
+      endProperty,
+      parseColorFor([endProperty], declaration.value.end, builder),
+    );
   }
 }
 
@@ -482,14 +543,17 @@ function parseBorderBlock(
   { value }: DeclarationType<"border-block">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor("border-block-color", parseColor(value.color, builder));
-  builder.addDescriptor(
-    "border-block-width",
-    parseBorderSideWidth(value.width, builder),
-  );
-  builder.addDescriptor(
-    "border-block-style",
+  const color = parseColorFor(blockColorEdges, value.color, builder);
+  const width = parseBorderSideWidth(value.width, builder);
+
+  builder.addDescriptor(blockColorEdges[0], color);
+  builder.addDescriptor(blockColorEdges[1], color);
+  builder.addDescriptor("border-top-width", width);
+  builder.addDescriptor("border-bottom-width", width);
+  dropUnsupportedInlineStyle(
     parseBorderStyle(value.style, builder),
+    builder,
+    "border-block-style",
   );
 }
 
@@ -502,8 +566,13 @@ function parseBorderBlockStart(
     parseColor(value.color, builder),
   );
   builder.addDescriptor(
-    "border-block-start-width",
+    "border-top-width",
     parseBorderSideWidth(value.width, builder),
+  );
+  dropUnsupportedInlineStyle(
+    parseBorderStyle(value.style, builder),
+    builder,
+    "border-block-start-style",
   );
 }
 
@@ -516,8 +585,13 @@ function parseBorderBlockEnd(
     parseColor(value.color, builder),
   );
   builder.addDescriptor(
-    "border-block-end-width",
+    "border-bottom-width",
     parseBorderSideWidth(value.width, builder),
+  );
+  dropUnsupportedInlineStyle(
+    parseBorderStyle(value.style, builder),
+    builder,
+    "border-block-end-style",
   );
 }
 
@@ -525,17 +599,17 @@ function parseBorderInline(
   { value }: DeclarationType<"border-inline">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor(
-    "border-inline-color",
-    parseColor(value.color, builder),
-  );
-  builder.addDescriptor(
-    "border-inline-width",
-    parseBorderSideWidth(value.width, builder),
-  );
-  builder.addDescriptor(
-    "border-inline-style",
+  const color = parseColor(value.color, builder);
+  const width = parseBorderSideWidth(value.width, builder);
+
+  builder.addDescriptor("border-start-color", color);
+  builder.addDescriptor("border-end-color", color);
+  builder.addDescriptor("border-start-width", width);
+  builder.addDescriptor("border-end-width", width);
+  dropUnsupportedInlineStyle(
     parseBorderStyle(value.style, builder),
+    builder,
+    "border-inline-style",
   );
 }
 
@@ -543,17 +617,15 @@ function parseBorderInlineStart(
   { value }: DeclarationType<"border-inline-start">,
   builder: StylesheetBuilder,
 ) {
+  builder.addDescriptor("border-start-color", parseColor(value.color, builder));
   builder.addDescriptor(
-    "border-inline-start-color",
-    parseColor(value.color, builder),
-  );
-  builder.addDescriptor(
-    "border-inline-start-width",
+    "border-start-width",
     parseBorderSideWidth(value.width, builder),
   );
-  builder.addDescriptor(
-    "border-inline-start-style",
+  dropUnsupportedInlineStyle(
     parseBorderStyle(value.style, builder),
+    builder,
+    "border-inline-start-style",
   );
 }
 
@@ -561,17 +633,15 @@ function parseBorderInlineEnd(
   { value }: DeclarationType<"border-inline-end">,
   builder: StylesheetBuilder,
 ) {
+  builder.addDescriptor("border-end-color", parseColor(value.color, builder));
   builder.addDescriptor(
-    "border-inline-end-color",
-    parseColor(value.color, builder),
-  );
-  builder.addDescriptor(
-    "border-inline-end-width",
+    "border-end-width",
     parseBorderSideWidth(value.width, builder),
   );
-  builder.addDescriptor(
-    "border-inline-end-style",
+  dropUnsupportedInlineStyle(
     parseBorderStyle(value.style, builder),
+    builder,
+    "border-inline-end-style",
   );
 }
 
@@ -580,8 +650,12 @@ export function parseBorderInlineWidth(
   builder: StylesheetBuilder,
 ) {
   builder.addDescriptor(
-    "border-inline-width",
+    "border-start-width",
     parseBorderSideWidth(declaration.value.start, builder),
+  );
+  builder.addDescriptor(
+    "border-end-width",
+    parseBorderSideWidth(declaration.value.end, builder),
   );
 }
 
@@ -590,28 +664,38 @@ export function parseBorderInlineStyle(
     | "border-inline-style"
     | "border-inline-start-style"
     | "border-inline-end-style"
+    | "border-block-start-style"
+    | "border-block-end-style"
   >,
   builder: StylesheetBuilder,
 ) {
   if (typeof declaration.value === "string") {
-    builder.addDescriptor(
-      declaration.property,
+    dropUnsupportedInlineStyle(
       parseBorderStyle(declaration.value, builder),
-    );
-  } else if (declaration.value.start === declaration.value.end) {
-    builder.addDescriptor(
+      builder,
       declaration.property,
-      parseBorderStyle(declaration.value.start, builder),
     );
   } else {
-    builder.addDescriptor(
-      "border-inline-start-style",
+    dropUnsupportedInlineStyle(
       parseBorderStyle(declaration.value.start, builder),
+      builder,
+      "border-inline-start-style",
     );
-    builder.addDescriptor(
-      "border-inline-end-style",
+    dropUnsupportedInlineStyle(
       parseBorderStyle(declaration.value.end, builder),
+      builder,
+      "border-inline-end-style",
     );
+  }
+}
+
+function dropUnsupportedInlineStyle(
+  style: string | undefined,
+  builder: StylesheetBuilder,
+  property: string,
+) {
+  if (style !== undefined && style !== "solid") {
+    builder.addWarning("style", property, style);
   }
 }
 
@@ -695,7 +779,7 @@ function parsePaddingBlock(
   { value }: DeclarationType<"padding-block">,
   builder: StylesheetBuilder,
 ) {
-  builder.addShorthand("padding-block", {
+  builder.addShorthand("padding-vertical", {
     "padding-block-start": parseLengthPercentageOrAuto(
       value.blockStart,
       builder,
@@ -708,7 +792,7 @@ function parsePaddingInline(
   { value }: DeclarationType<"padding-inline">,
   builder: StylesheetBuilder,
 ) {
-  builder.addShorthand("padding-inline", {
+  builder.addShorthand("padding-horizontal", {
     "padding-inline-start": parseLengthPercentageOrAuto(
       value.inlineStart,
       builder,
@@ -735,146 +819,131 @@ function parseFont(
   builder.addDescriptor("font-weight", parseFontWeight(value.weight, builder));
 }
 
+type TransformFunction = Extract<
+  StyleFunction,
+  [Record<never, never>, string, StyleDescriptor]
+>;
+
+// An argument React Native has no equivalent for leaves the declaration invalid there, and an invalid declaration is ignored (CSS 2.2 §4.2)
+function hasUnconvertibleArgument(
+  functions: readonly TransformFunction[],
+): boolean {
+  return functions.some(([, , argument]) => argument === undefined);
+}
+
 function parseTransform(
   { value }: DeclarationType<"transform">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor("transform", [
-    {},
-    "transform",
-    value.flatMap((t): StyleDescriptor[] => {
-      switch (t.type) {
-        case "perspective":
-          return [[{}, "perspective", parseLength(t.value, builder)]];
-        case "translate":
-          return [
-            [
-              {},
-              "translateX",
-              parseLengthOrCoercePercentageToRuntime(t.value[0], builder),
-            ],
-            [
-              [
-                {},
-                "translateY",
-                parseLengthOrCoercePercentageToRuntime(t.value[1], builder),
-              ],
-            ],
-          ];
-        case "translateX":
-          return [
-            [
-              {},
-              "translateX",
-              parseLengthOrCoercePercentageToRuntime(t.value, builder),
-            ],
-          ];
-        case "translateY":
-          return [
-            [
-              {},
-              "translateY",
-              parseLengthOrCoercePercentageToRuntime(t.value, builder),
-            ],
-          ];
-        case "rotate":
-          return [[{}, "rotate", parseAngle(t.value, builder)]];
-        case "rotateX":
-          return [[{}, "rotateX", parseAngle(t.value, builder)]];
-        case "rotateY":
-          return [[{}, "rotateY", parseAngle(t.value, builder)]];
-        case "rotateZ":
-          return [[{}, "rotateZ", parseAngle(t.value, builder)]];
-        case "scale":
-          return [
-            [{}, "scaleX", parseLength(t.value[0], builder)],
-            [{}, "scaleY", parseLength(t.value[1], builder)],
-          ];
-        case "scaleX":
-          return [[{}, "scaleX", parseLength(t.value, builder)]];
-        case "scaleY":
-          return [[{}, "scaleY", parseLength(t.value, builder)]];
-        case "skew":
-          return [
-            [{}, "skewX", parseAngle(t.value[0], builder)],
-            [{}, "skewY", parseAngle(t.value[1], builder)],
-          ];
-        case "skewX":
-          return [[{}, "skewX", parseAngle(t.value, builder)]];
-        case "skewY":
-          return [[{}, "skewY", parseAngle(t.value, builder)]];
-        case "translateZ":
-        case "translate3d":
-        case "scaleZ":
-        case "scale3d":
-        case "rotate3d":
-        case "matrix":
-        case "matrix3d":
-          return [[]];
-      }
-    }),
-  ]);
-  return;
+  const functions = value.flatMap((t): TransformFunction[] => {
+    switch (t.type) {
+      case "perspective":
+        return [[{}, "perspective", parseLength(t.value, builder)]];
+      case "translate":
+        return [
+          [{}, "translateX", parseLength(t.value[0], builder)],
+          [{}, "translateY", parseLength(t.value[1], builder)],
+        ];
+      case "translateX":
+        return [[{}, "translateX", parseLength(t.value, builder)]];
+      case "translateY":
+        return [[{}, "translateY", parseLength(t.value, builder)]];
+      case "rotate":
+        return [[{}, "rotate", parseAngle(t.value, builder)]];
+      case "rotateX":
+        return [[{}, "rotateX", parseAngle(t.value, builder)]];
+      case "rotateY":
+        return [[{}, "rotateY", parseAngle(t.value, builder)]];
+      case "rotateZ":
+        return [[{}, "rotateZ", parseAngle(t.value, builder)]];
+      case "scale":
+        return [
+          [{}, "scaleX", parseLength(t.value[0], builder)],
+          [{}, "scaleY", parseLength(t.value[1], builder)],
+        ];
+      case "scaleX":
+        return [[{}, "scaleX", parseLength(t.value, builder)]];
+      case "scaleY":
+        return [[{}, "scaleY", parseLength(t.value, builder)]];
+      case "skew":
+        return [
+          [{}, "skewX", parseAngle(t.value[0], builder)],
+          [{}, "skewY", parseAngle(t.value[1], builder)],
+        ];
+      case "skewX":
+        return [[{}, "skewX", parseAngle(t.value, builder)]];
+      case "skewY":
+        return [[{}, "skewY", parseAngle(t.value, builder)]];
+      case "translateZ":
+      case "translate3d":
+      case "scaleZ":
+      case "scale3d":
+      case "rotate3d":
+      case "matrix":
+      case "matrix3d":
+        return [];
+    }
+  });
+
+  if (hasUnconvertibleArgument(functions)) {
+    return;
+  }
+
+  builder.addDescriptor("transform", [{}, "transform", functions]);
 }
 
 function parseTranslate(
   { value }: DeclarationType<"translate">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor("translateX", [
-    {},
-    "translateX",
-    parseTranslateProp(value, "x", builder),
-  ]);
-  builder.addDescriptor("translateY", [
-    {},
-    "translateY",
-    parseTranslateProp(value, "y", builder),
-  ]);
+  const translations: TransformFunction[] = [
+    [{}, "translateX", parseTranslateProp(value, "x", builder)],
+    [{}, "translateY", parseTranslateProp(value, "y", builder)],
+  ];
+
+  if (hasUnconvertibleArgument(translations)) {
+    return;
+  }
+
+  builder.addDescriptor("translate", translations);
 }
 
 function parseRotate(
   { value }: DeclarationType<"rotate">,
   builder: StylesheetBuilder,
 ) {
+  const angle = parseAngle(value.angle, builder);
+  const rotations: TransformFunction[] = [];
+
   if (value.x) {
-    builder.addDescriptor("rotateX", [
-      {},
-      "rotateX",
-      parseAngle(value.angle, builder),
-    ]);
+    rotations.push([{}, "rotateX", angle]);
   }
 
   if (value.y) {
-    builder.addDescriptor("rotateY", [
-      {},
-      "rotateY",
-      parseAngle(value.angle, builder),
-    ]);
+    rotations.push([{}, "rotateY", angle]);
   }
 
   if (value.z) {
-    builder.addDescriptor("rotateZ", [
-      {},
-      "rotateZ",
-      parseAngle(value.angle, builder),
-    ]);
+    rotations.push([{}, "rotateZ", angle]);
   }
+
+  if (hasUnconvertibleArgument(rotations)) {
+    return;
+  }
+
+  builder.addDescriptor(
+    "rotate",
+    rotations.length === 1 ? rotations[0] : rotations,
+  );
 }
 
 function parseScale(
   { value }: DeclarationType<"scale">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor("scaleX", [
-    {},
-    "scaleX",
-    parseScaleValue(value, "x", builder),
-  ]);
-  builder.addDescriptor("scaleY", [
-    {},
-    "scaleY",
-    parseScaleValue(value, "y", builder),
+  builder.addDescriptor("scale", [
+    [{}, "scaleX", parseScaleValue(value, "x", builder)],
+    [{}, "scaleY", parseScaleValue(value, "y", builder)],
   ]);
 }
 
@@ -884,7 +953,7 @@ export function parseScaleValue(
   builder: StylesheetBuilder,
 ): StyleDescriptor {
   if (translate === "none") {
-    return 0;
+    return 1;
   }
 
   return parseLength(translate[prop], builder);
@@ -962,6 +1031,11 @@ export function parseUnparsedDeclaration(
     return;
   }
 
+  if (unsupportedLogicalStyles.has(property)) {
+    builder.addWarning("property", property);
+    return;
+  }
+
   builder.setWarningProperty(property);
 
   /**
@@ -972,10 +1046,28 @@ export function parseUnparsedDeclaration(
     property = rename;
   }
 
+  // A var() axis colour lands on its edge pair as two declarations, so a later edge colour replaces it in cascade order
+  const edges =
+    property === "border-inline-color"
+      ? inlineColorEdges
+      : property === "border-block-color"
+        ? blockColorEdges
+        : undefined;
+
+  if (edges) {
+    builder.descriptorProperties = edges;
+    const value = parseUnparsed(declaration.value.value, builder, property);
+    const pair =
+      Array.isArray(value) && !isStyleFunction(value) && value.length === 2;
+    builder.addDescriptor(edges[0], pair ? value[0] : value);
+    builder.addDescriptor(edges[1], pair ? value[1] : value);
+    return;
+  }
+
   /**
    * Unparsed shorthand properties need to be parsed at runtime
    */
-  builder.descriptorProperty = property;
+  builder.descriptorProperties = [property];
 
   if (unparsedRuntimeParsing.has(property)) {
     const args = parseUnparsed(declaration.value.value, builder, property);
@@ -983,7 +1075,12 @@ export function parseUnparsedDeclaration(
     if (property === "animation") {
       builder.addDescriptor("animation", [{}, property, args]);
     } else {
-      builder.addDescriptor(property, [{}, toRNProperty(property), args, 1]);
+      builder.addDescriptor(property, [
+        {},
+        INDIVIDUAL_TRANSFORM_RESOLVERS.get(property) ?? toRNProperty(property),
+        args,
+        1,
+      ]);
     }
   } else {
     const value = parseUnparsed(declaration.value.value, builder, property);
@@ -1012,7 +1109,10 @@ export function parseCustomDeclaration(
 ) {
   const property = declaration.value.name;
 
-  if (property === "-webkit-line-clamp") {
+  if (isMappingProperty(property)) {
+    // Consumed before declarations so property order cannot affect mapping.
+    return;
+  } else if (property === "-webkit-line-clamp") {
     builder.addDescriptor(
       property,
       parseUnparsed(declaration.value.value, builder, property),
@@ -1111,8 +1211,9 @@ export function reduceParseUnparsed(
     }
   }
 
-  // Groups are the tokens grouped together by comma location
-  // If a group only has 1 item, it shouldn't be an array
+  // Groups are the tokens grouped together by comma location. Each stays an
+  // array, so a one-token item of a comma-separated list stays distinct from
+  // a token of a space-separated one (css-variables-1 §2.1)
   groups = groups.flatMap((group): StyleDescriptor[] => {
     if (!Array.isArray(group)) {
       return [];
@@ -1126,7 +1227,7 @@ export function reduceParseUnparsed(
       if (first === undefined) {
         return [];
       } else {
-        return [first];
+        return [[first]];
       }
     } else if (
       // This is a special case for <ratio> values
@@ -1138,13 +1239,19 @@ export function reduceParseUnparsed(
       )
     ) {
       // eslint-disable-next-line @typescript-eslint/no-base-to-string
-      return [group.join(" ")];
+      return [[group.join(" ")]];
     } else {
       return [group];
     }
   });
 
-  return groups.length === 1 ? groups[0] : groups;
+  if (groups.length !== 1) {
+    return groups;
+  }
+
+  // A lone group is the value, and a lone token the group
+  const group = groups[0] as StyleDescriptor[];
+  return group.length === 1 ? group[0] : group;
 }
 
 export function unparsedFunction(
@@ -1514,6 +1621,7 @@ export function parseLength(
     switch (length.type) {
       case "calc": {
         // TODO: Add the calc polyfill
+        builder.addWarning("value", "calc()");
         return undefined;
       }
       case "number": {
@@ -1666,7 +1774,7 @@ export function parseColorDeclaration(
   builder: StylesheetBuilder,
 ) {
   builder.addDescriptor(
-    declaration.property,
+    propertyRename[declaration.property] ?? declaration.property,
     parseColor(declaration.value, builder),
   );
 }
@@ -2222,12 +2330,8 @@ export function parseBorderBlockWidth(
   const start = parseBorderSideWidth(declaration.value.start, builder);
   const end = parseBorderSideWidth(declaration.value.end, builder);
 
-  if (start === end) {
-    builder.addDescriptor("border-block-width", start);
-  } else {
-    builder.addDescriptor("border-block-start-width", start);
-    builder.addDescriptor("border-block-end-width", end);
-  }
+  builder.addDescriptor("border-top-width", start);
+  builder.addDescriptor("border-bottom-width", end);
 }
 
 function parseBorderBlockStyle(
@@ -2237,12 +2341,8 @@ function parseBorderBlockStyle(
   const start = parseBorderStyle(declaration.value.start, builder);
   const end = parseBorderStyle(declaration.value.end, builder);
 
-  if (start == end) {
-    builder.addDescriptor("border-block-style", start);
-  } else {
-    builder.addDescriptor("border-block-start-style", start);
-    builder.addDescriptor("border-block-end-style", end);
-  }
+  dropUnsupportedInlineStyle(start, builder, "border-block-start-style");
+  dropUnsupportedInlineStyle(end, builder, "border-block-end-style");
 }
 
 export function parseBorderSideWidthDeclaration(
@@ -2250,7 +2350,7 @@ export function parseBorderSideWidthDeclaration(
   builder: StylesheetBuilder,
 ) {
   builder.addDescriptor(
-    declaration.property,
+    propertyRename[declaration.property] ?? declaration.property,
     parseBorderSideWidth(declaration.value, builder),
   );
 }
@@ -2294,12 +2394,10 @@ export function parseLineHeightDeclaration(
   declaration: DeclarationType<"line-height">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor("line-height", [
-    {},
-    "lineHeight",
-    [parseLineHeight(declaration.value, builder)],
-    1,
-  ]);
+  builder.addDescriptor(
+    "line-height",
+    parseLineHeight(declaration.value, builder),
+  );
 }
 
 export function parseLineHeight(
@@ -2310,7 +2408,7 @@ export function parseLineHeight(
     case "normal":
       return undefined;
     case "number":
-      return [{}, "em", [value.value], 1];
+      return [{}, "em", value.value, 1];
     case "length": {
       const length = value.value;
 
@@ -2323,7 +2421,7 @@ export function parseLineHeight(
             "style",
             "line-height",
             typeof length.value === "number"
-              ? length.value
+              ? String(length.value)
               : JSON.stringify(length.value),
           );
           return;
@@ -2414,13 +2512,6 @@ export function parseFontVariantCaps(
 
   builder.addWarning("value", value);
   return undefined;
-}
-
-export function parseLengthOrCoercePercentageToRuntime(
-  value: Length | DimensionPercentageFor_LengthValue | NumberOrPercentage,
-  builder: StylesheetBuilder,
-): StyleDescriptor {
-  return parseLength(value, builder);
 }
 
 export function parseGap(
@@ -2740,7 +2831,12 @@ export function parseColorMix(
   builder: StylesheetBuilder,
   property: string,
 ): StyleDescriptor {
-  const [inToken, whitespace, colorSpace, comma, ...rest] = tokens;
+  const [inToken, whitespace, colorSpace, comma, ...remaining] = tokens;
+  const rest = remaining.filter(
+    (token) =>
+      token.type !== "token" ||
+      !["white-space", "comment"].includes(token.value.type),
+  );
   if (
     typeof inToken !== "object" ||
     inToken.type !== "token" ||
@@ -2799,11 +2895,6 @@ export function parseColorMix(
 
   const rightColorArg = parseUnparsed(nextToken, builder, property);
 
-  if (rightColorArg === "transparent") {
-    // Ignore the rest, treat as single color with alpha
-    return [{}, "colorMix", [colorSpaceArg, leftColorArg, leftColorPercentage]];
-  }
-
   nextToken = rest.shift();
   let rightColorPercentage: StyleDescriptor | undefined;
   if (nextToken?.type !== "token" || nextToken.value.type !== "comma") {
@@ -2819,13 +2910,15 @@ export function parseColorMix(
   return [
     {},
     "colorMix",
+    // Omitted weights must not leave holes: Metro serializes them as null,
+    // which the native resolver rejects.
     [
       colorSpaceArg,
       leftColorArg,
       leftColorPercentage,
       rightColorArg,
       rightColorPercentage,
-    ],
+    ].filter((arg) => arg !== undefined),
   ];
 }
 
@@ -2951,10 +3044,10 @@ export function parseUnresolvedColor(
         {},
         "rgba",
         [
-          round(color.r * 255),
-          round(color.g * 255),
-          round(color.b * 255),
-          parseUnparsed(color.alpha, builder, property),
+          [round(color.r * 255)],
+          [round(color.g * 255)],
+          [round(color.b * 255)],
+          [parseUnparsed(color.alpha, builder, property)],
         ],
       ];
     case "hsl":
@@ -2962,10 +3055,10 @@ export function parseUnresolvedColor(
         {},
         color.type,
         [
-          color.h,
-          color.s,
-          color.l,
-          parseUnparsed(color.alpha, builder, property),
+          [color.h],
+          [color.s],
+          [color.l],
+          [parseUnparsed(color.alpha, builder, property)],
         ],
       ];
     case "light-dark": {
@@ -3203,21 +3296,25 @@ function parseBackgroundImage(
   declaration: DeclarationType<"background-image">,
   builder: StylesheetBuilder,
 ) {
-  builder.addDescriptor(
-    "background-image",
-    declaration.value.flatMap((image): StyleDescriptor[] => {
-      switch (image.type) {
-        case "gradient": {
-          const gradient = parseGradient(image.value, builder);
-          return gradient ? [gradient] : [];
+  builder.addDescriptor("background-image", [
+    {},
+    "join",
+    [
+      declaration.value.flatMap((image): StyleDescriptor[] => {
+        switch (image.type) {
+          case "gradient": {
+            const gradient = parseGradient(image.value, builder);
+            return gradient ? [gradient] : [];
+          }
+          case "none":
+            return ["none"];
         }
-        case "none":
-          return ["none"];
-      }
 
-      return [];
-    }),
-  );
+        return [];
+      }),
+      ", ",
+    ],
+  ]);
   return;
 }
 
@@ -3420,14 +3517,14 @@ function parseGradient(
 ): StyleDescriptor {
   switch (gradient.type) {
     case "linear": {
-      return gradientToCss([
+      return [
         {},
         "linear-gradient",
         [
-          parseLineDirection(gradient.direction, builder),
-          ...gradient.items.map((item) => parseGradientItem(item, builder)),
+          [parseLineDirection(gradient.direction, builder)],
+          ...gradient.items.map((item) => [parseGradientItem(item, builder)]),
         ],
-      ]);
+      ];
     }
     case "radial": {
       const shape = endingShapeToCss(gradient.shape, builder);
@@ -3437,40 +3534,18 @@ function parseGradient(
         return;
       }
 
-      return gradientToCss([
+      return [
         {},
         "radial-gradient",
         [
-          `${shape} at ${position}`,
-          ...gradient.items.map((item) => parseGradientItem(item, builder)),
+          [`${shape} at ${position}`],
+          ...gradient.items.map((item) => [parseGradientItem(item, builder)]),
         ],
-      ]);
+      ];
     }
   }
 
   return;
-}
-
-/**
- * Static gradients are serialized at compile time. The runtime treats strings
- * ending in `px` as inlined variables and strips the unit, which would corrupt
- * lengths inside the gradient.
- */
-function gradientToCss(
-  gradient: [object, string, StyleDescriptor[]],
-): StyleDescriptor {
-  const [, name, args] = gradient;
-
-  if (args.includes(undefined)) {
-    return;
-  }
-
-  const strings = args.filter((arg): arg is string => typeof arg === "string");
-  if (strings.length !== args.length) {
-    return gradient as StyleDescriptor;
-  }
-
-  return `${name}(${strings.join(", ")})`;
 }
 
 function endingShapeToCss(
@@ -3519,23 +3594,15 @@ function parseGradientItem(
 ): StyleDescriptor {
   switch (item.type) {
     case "color-stop": {
-      const color = parseColor(item.color, builder);
-
-      if (!item.position) {
-        return color;
+      const args: StyleDescriptor[] = [parseColor(item.color, builder)];
+      if (item.position) {
+        args.push(parseLength(item.position, builder));
       }
 
-      const position = lengthToCss(item.position, builder);
-      if (position === undefined) {
-        return;
-      }
-
-      return typeof color === "string"
-        ? `${color} ${position}`
-        : [color, position];
+      return [{}, "colorStop", args, 1];
     }
     case "hint":
-      return lengthToCss(item.value, builder);
+      return [{}, "gradientPosition", parseLength(item.value, builder), 1];
   }
 }
 
@@ -3693,7 +3760,7 @@ function parseFilter(
           } as unknown as StyleDescriptor;
         case "hue-rotate":
           return {
-            [value.type]: parseAngle(value.value, builder),
+            [toRNProperty(value.type)]: parseAngle(value.value, builder),
           } as unknown as StyleDescriptor;
         case "drop-shadow":
           return [

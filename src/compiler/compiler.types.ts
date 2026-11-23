@@ -24,6 +24,15 @@ export interface InlineVariableOptions {
   exclude?: `--${string}`[];
 }
 
+// A channel is absent when the compile recorded nothing on it
+export interface CompilerWarnings {
+  properties?: string[];
+  values?: Record<string, string[]>;
+  functions?: string[];
+  // CSS lightningcss could not parse, which the author fixes in their stylesheet
+  syntax?: string[];
+}
+
 /**
  * A `react-native-css` StyleSheet
  */
@@ -40,6 +49,8 @@ export interface ReactNativeCssStyleSheet {
   vr?: RootVariables;
   /** Universal Variables */
   vu?: RootVariables;
+  /** Registered Properties */
+  vp?: PropertyRegistration[];
 }
 
 /********************************    Styles    ********************************/
@@ -153,6 +164,12 @@ export type VariableValue =
   | [StyleDescriptor, MediaCondition[]];
 
 export type RootVariables = [string, VariableValue[]][];
+
+export type PropertyRegistration = readonly [
+  string, // name
+  boolean, // inherits
+  StyleDescriptor?, // initial value
+];
 
 export type InlineVariable = {
   [VAR_SYMBOL]: "inline";

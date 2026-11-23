@@ -10,8 +10,12 @@ import {
 import type { StyleDescriptor } from "react-native-css/compiler";
 
 export type Effect = {
-  observers: Set<Effect>;
+  observers: Set<Observable<any, any>>;
   run(): void;
+  /** Dependencies recorded by the last cleanupEffect() */
+  dependencies?: Observable<any, any>[];
+  /** Dependency values recorded by the last cleanupEffect() */
+  snapshots?: [Observable<any, any>, unknown][];
 };
 
 export type Observable<Value, Arg = Value> = {
@@ -19,6 +23,7 @@ export type Observable<Value, Arg = Value> = {
   get: (effect?: Effect) => Value;
   set: (arg: Arg) => void;
   run: () => void;
+  unsubscribe: (effect: Effect) => void;
 };
 type Read<Value, Arg> = (get: Getter, arg?: Arg) => Value;
 export type Getter = <Value>(observable: Observable<Value, any>) => Value;
@@ -43,9 +48,10 @@ export function observable<Value, Arg = Value>(
 
   const observers = new Set<Effect>();
   const effect: Effect = {
-    observers,
+    observers: new Set(),
     run: () => {
       if (!isStatic) {
+        cleanupEffect(effect);
         const nextValue = (init as Read<Value, Arg>)(getter, lastArg);
         if (equality(value, nextValue)) {
           return;
@@ -57,14 +63,19 @@ export function observable<Value, Arg = Value>(
     },
   };
 
-  const getter: Getter = (observable) => observable.get(effect);
+  const getter: Getter = (observable) =>
+    observable.get(observers.size > 0 ? effect : undefined);
 
-  function get(effect?: Effect) {
-    if (effect) {
-      observers.add(effect);
+  function get(subscriber?: Effect) {
+    if (subscriber) {
+      if (observers.size === 0 && !isStatic) didInit = false;
+      observers.add(subscriber);
+      subscriber.observers.add(obs);
     }
     if (!didInit) {
-      value = (init as Read<Value, Arg>)(getter, undefined);
+      cleanupEffect(effect);
+      value = (init as Read<Value, Arg>)(getter, lastArg);
+      didInit = observers.size > 0;
     }
 
     return value;
@@ -77,9 +88,10 @@ export function observable<Value, Arg = Value>(
       }
       value = arg as unknown as Value;
     } else {
+      cleanupEffect(effect);
       const nextValue = (init as Read<Value, Arg>)(getter, arg);
 
-      didInit = true;
+      didInit = observers.size > 0;
       lastArg = arg;
 
       if (equality(value, nextValue)) {
@@ -108,6 +120,13 @@ export function observable<Value, Arg = Value>(
     get,
     set,
     run: effect.run,
+    unsubscribe(subscriber) {
+      if (observers.delete(subscriber) && observers.size === 0 && !isStatic) {
+        cleanupEffect(effect);
+        didInit = false;
+      }
+      subscriber.observers.delete(obs);
+    },
   };
 
   return obs;
@@ -115,10 +134,26 @@ export function observable<Value, Arg = Value>(
 
 export function cleanupEffect(effect: Effect) {
   if (!effect) return;
-  for (const dep of effect.observers) {
-    dep.observers.delete(effect);
-  }
+  const dependencies = (effect.dependencies = Array.from(effect.observers));
+  // Snapshot before detaching so computed observables return cached values
+  effect.snapshots = dependencies.map(
+    (observable) =>
+      [observable, observable.get()] as [Observable<any, any>, unknown],
+  );
   effect.observers.clear();
+  for (const dep of dependencies) {
+    dep.unsubscribe(effect);
+  }
+}
+
+/** Whether any of the effect's dependencies changed since cleanupEffect() */
+export function hasChangedDependencies(effect: Effect): boolean {
+  const snapshots = effect.snapshots;
+  if (!snapshots) return false;
+  for (const [observable, value] of snapshots) {
+    if (!Object.is(observable.get(), value)) return true;
+  }
+  return false;
 }
 
 /** Family Helpers ************************************************************/
@@ -129,16 +164,17 @@ export function family<Key, Result = Key, Args extends any = void>(
   const map = new Map<Key, Result>();
   return Object.assign(
     (key: Key, args: Args) => {
-      let value = map.get(key);
-      if (!value) {
-        value = fn(key, args);
-        map.set(key, value);
-      }
+      if (map.has(key)) return map.get(key)!;
+      const value = fn(key, args);
+      map.set(key, value);
       return value;
     },
     {
       delete(key: Key) {
         return map.delete(key);
+      },
+      size() {
+        return map.size;
       },
       clear() {
         return map.clear();
@@ -166,11 +202,9 @@ export function weakFamily<Key extends WeakKey, Args = undefined, Result = Key>(
   const map = new WeakMap<Key, Result>();
   return Object.assign(
     (key: Key, args: Args) => {
-      let value = map.get(key);
-      if (!value) {
-        value = fn(key, args);
-        map.set(key, value);
-      }
+      if (map.has(key)) return map.get(key)!;
+      const value = fn(key, args);
+      map.set(key, value);
       return value;
     },
     {
@@ -185,6 +219,21 @@ export const VAR_SYMBOL = Symbol.for("react-native-css.var");
 export type VariableContextValue = Record<string, StyleDescriptor> & {
   [VAR_SYMBOL]: true;
 };
+
+// Variable lookup is presence-keyed, so an entry with no value produces no key rather than one that stops the cascade
+export function toVariableRecord(
+  variables: Record<string, StyleDescriptor>,
+): Record<string, StyleDescriptor> {
+  const record: Record<string, StyleDescriptor> = {};
+
+  for (const [name, value] of Object.entries(variables)) {
+    if (value !== undefined) {
+      record[name.replace(/^--/, "")] = value;
+    }
+  }
+
+  return record;
+}
 
 /** Pseudo Classes ************************************************************/
 
@@ -216,14 +265,20 @@ Dimensions.addEventListener("change", ({ window }) => {
 
 /** Color Scheme **************************************************************/
 
-export const colorScheme = observable<ColorSchemeName>(
+export const colorScheme = observable<ColorSchemeName | null | undefined>(
   Appearance.getColorScheme(),
 );
 Appearance.addChangeListener((event) => colorScheme.set(event.colorScheme));
 
 /** Containers ****************************************************************/
 
-export type ContainerContextValue = Record<string, WeakKey>;
+export type ContainerContextValue = Record<
+  string,
+  {
+    key: WeakKey;
+    props: Record<string, unknown> | null | undefined;
+  }
+>;
 export const ContainerContext = createContext<ContainerContextValue>({});
 
 export const containerLayoutFamily = weakFamily(() => {
@@ -241,98 +296,8 @@ export const containerWidthFamily = weakFamily((key) => {
   });
 });
 
-/**
- * Attributes (=props) of the component acting as a container, so `group-<attribute>:` rules can
- * be evaluated. Two pieces, because the value and the notification have to happen at different
- * times:
- *
- * - the value is written during the container's render (a plain WeakMap, no notification), so a
- *   child reading it while rendering right after its parent already sees the current props;
- * - the notification is a version bump flushed after commit, because subscribers re-run by
- *   setting state on components other than the one rendering.
- *
- * Only attribute-testable values participate in the change check. Object and function props get
- * a new identity on every render (`style`, inline handlers), and treating those as changes would
- * notify on every commit; `children` is compared by presence because that is all `:empty` asks.
- */
-const containerAttributes = new WeakMap<
-  WeakKey,
-  Record<string, unknown> | undefined
->();
-const publishedContainerAttributes = new WeakMap<
-  WeakKey,
-  Record<string, unknown> | undefined
->();
-
-export const containerAttributesFamily = weakFamily(() => observable(0));
-
-function isAttributeTestable(value: unknown) {
-  const type = typeof value;
-  return type !== "object" && type !== "function";
-}
-
-function sameContainerAttributes(
-  previous: Record<string, unknown> | undefined,
-  next: Record<string, unknown> | undefined,
-) {
-  if (previous === next) {
-    return true;
-  }
-
-  const keys = new Set([
-    ...Object.keys(previous ?? {}),
-    ...Object.keys(next ?? {}),
-  ]);
-
-  for (const key of keys) {
-    const previousValue = previous?.[key];
-    const nextValue = next?.[key];
-
-    if (key === "children") {
-      if (Boolean(previousValue) !== Boolean(nextValue)) {
-        return false;
-      }
-      continue;
-    }
-
-    if (!isAttributeTestable(previousValue) && !isAttributeTestable(nextValue)) {
-      continue;
-    }
-
-    if (!Object.is(previousValue, nextValue)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-export function setContainerAttributes(
-  key: WeakKey,
-  props: Record<string, unknown> | undefined,
-) {
-  containerAttributes.set(key, props);
-}
-
-export function getContainerAttributes(key: WeakKey) {
-  return containerAttributes.get(key);
-}
-
-export function flushContainerAttributes(key: WeakKey) {
-  const next = containerAttributes.get(key);
-
-  if (sameContainerAttributes(publishedContainerAttributes.get(key), next)) {
-    return;
-  }
-
-  publishedContainerAttributes.set(key, next);
-
-  const version = containerAttributesFamily(key);
-  version.set(version.get() + 1);
-}
-
 export const containerHeightFamily = weakFamily((key) => {
   return observable((read) => {
-    return read(containerLayoutFamily(key))?.width || 0;
+    return read(containerLayoutFamily(key))?.height || 0;
   });
 });

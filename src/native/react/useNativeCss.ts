@@ -4,10 +4,11 @@ import {
   Fragment,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ComponentType,
 } from "react";
-import { Pressable, View } from "react-native";
+import { Image, Pressable, StyleSheet, View } from "react-native";
 
 import { VariableContext } from "react-native-css/native-internal";
 
@@ -16,8 +17,8 @@ import { testGuards, type RenderGuard } from "../conditions/guards";
 import {
   cleanupEffect,
   ContainerContext,
-  flushContainerAttributes,
-  setContainerAttributes,
+  hasChangedDependencies,
+  weakFamily,
   type ContainerContextValue,
   type Effect,
   type Getter,
@@ -71,9 +72,6 @@ export function useNativeCss(
   const inheritedContainers = useContext(ContainerContext);
 
   const [state, setState] = useState((): ComponentState => {
-    // Both effects share the same observers to improve memory usage
-    const observers = new Set<Effect>();
-
     /**
      * When fired, this effect will force the rules to be re-evaluated.
      * This will cause a re-render if there are different rules
@@ -81,7 +79,7 @@ export function useNativeCss(
      * Use this when a rule condition changes, e.g FastRefresh or media queries
      */
     const ruleEffect: Effect = {
-      observers,
+      observers: new Set(),
       run: () => setState((state) => updateRules(state)),
     };
 
@@ -92,11 +90,11 @@ export function useNativeCss(
      * Use this when a value changes, e.g vm units or light / dark mode
      */
     const styleEffect: Effect = {
-      observers,
+      observers: new Set(),
       run: () => setState((state) => ({ ...state })),
     };
 
-    return updateRules(
+    const initialState = updateRules(
       {
         ruleEffect,
         ruleEffectGetter: (observable) => observable.get(ruleEffect),
@@ -112,25 +110,36 @@ export function useNativeCss(
       false,
       false,
     );
+    // State initializers may be discarded by React StrictMode. Subscribe once
+    // the component commits instead of retaining an abandoned initializer.
+    cleanupEffect(ruleEffect);
+    return initialState;
   });
 
-  // The snapshot `group-<attribute>:` reads. It has to be written on every render: inside
-  // `updateRules` it would be skipped by the guards on a container whose own rules don't use the
-  // prop, leaving a stale snapshot behind.
-  if (state.containers) {
-    setContainerAttributes(state.ruleEffectGetter, originalProps ?? undefined);
-  }
+  // Distinguishes a fresh mount from an effect replay (Activity, StrictMode)
+  const hasCommittedRef = useRef(false);
 
-  // Both effects share the same observers, so we only need to cleanup one of them
-  useEffect(() => () => cleanupEffect(state.ruleEffect), [state.ruleEffect]);
-
-  // Waking the subscribers has to wait for commit, unlike writing the snapshot: running those
-  // effects sets state on components other than the one rendering.
   useEffect(() => {
-    if (state.containers) {
-      flushContainerAttributes(state.ruleEffectGetter);
+    // Reconnect subscriptions after React replays an effect setup.
+    if (state.ruleEffect.observers.size === 0) {
+      if (hasCommittedRef.current || hasChangedDependencies(state.ruleEffect)) {
+        // Replay, or conditions changed since the initializer: recalculate.
+        state.ruleEffect.run();
+        state.styleEffect.run();
+      } else {
+        // Fresh mount: resubscribe to the initializer's dependencies.
+        // styleEffect resubscribes itself during render.
+        for (const observable of state.ruleEffect.dependencies ?? []) {
+          observable.get(state.ruleEffect);
+        }
+      }
     }
-  });
+    hasCommittedRef.current = true;
+    return () => {
+      cleanupEffect(state.ruleEffect);
+      cleanupEffect(state.styleEffect);
+    };
+  }, [state.ruleEffect, state.styleEffect]);
 
   // Check if our derived state has changed (e.g the className prop)
   if (
@@ -154,7 +163,11 @@ export function useNativeCss(
     return createElement(Fragment);
   }
 
-  let props = getStyledProps(state, originalProps);
+  let props = getStyledProps(
+    state,
+    originalProps,
+    type === Image ? adaptImageProps : undefined,
+  );
 
   if (type === View && props?.onPress) {
     type = Pressable;
@@ -173,8 +186,18 @@ export function useNativeCss(
   }
 
   if (state.containers) {
+    // Publish a new props snapshot even when this component's own rules did not
+    // change. Descendants can depend on an ancestor attribute through a group.
+    const containers = Object.fromEntries(
+      Object.entries(state.containers).map(([name, container]) => [
+        name,
+        container.key === state.ruleEffectGetter
+          ? { key: container.key, props: originalProps }
+          : (inheritedContainers[name] ?? container),
+      ]),
+    );
     props = {
-      value: state.containers,
+      value: containers,
       children: createElement(type, props),
     };
     type = ContainerContext.Provider;
@@ -183,10 +206,10 @@ export function useNativeCss(
   return createElement(type, props);
 }
 
-/**
- * Convert the styled() mapping to a config array
- */
-export function mappingToConfig(mapping: StyledConfiguration<any>) {
+// Derived once per mapping, since the resolved-style cache keys on the config array's identity
+const configForMapping = weakFamily(function (
+  mapping: StyledConfiguration<any>,
+): Config[] {
   return Object.entries(mapping).flatMap(([key, value]): Config => {
     if (value === true) {
       return {
@@ -198,12 +221,12 @@ export function mappingToConfig(mapping: StyledConfiguration<any>) {
     } else if (typeof value === "string") {
       return { source: key, target: value.split(".") };
     } else if (typeof value === "object") {
-      const nativeStyleMapping = value.nativeStyleMapping
+      // Keep the declared deprecated alias working. The current spelling wins
+      // when both are provided, including an intentionally empty mapping.
+      const mapping = value.nativeStyleMapping ?? value.nativeStyleToProp;
+      const nativeStyleMapping = mapping
         ? Object.fromEntries(
-            Object.entries(value.nativeStyleMapping).map(([k, v]) => [
-              k,
-              v === true ? k : v,
-            ]),
+            Object.entries(mapping).map(([k, v]) => [k, v === true ? k : v]),
           )
         : undefined;
 
@@ -230,4 +253,26 @@ export function mappingToConfig(mapping: StyledConfiguration<any>) {
 
     throw new Error(`styled(): Invalid mapping for ${key}: ${value}`);
   });
+});
+
+// Refused by name, since a primitive would otherwise fail inside the WeakMap with a message naming neither styled() nor the argument
+export function mappingToConfig(mapping: StyledConfiguration<any>): Config[] {
+  if (typeof mapping !== "object" || mapping === null) {
+    throw new Error(
+      `styled(): mapping must be an object, received ${mapping === null ? "null" : typeof mapping}`,
+    );
+  }
+
+  return configForMapping(mapping);
+}
+
+// Apply native Image fitting before normal, inline, and important props merge.
+// The compiler's contentFit mapping remains available to Expo Image adapters.
+function adaptImageProps(props: Record<string, any> | undefined) {
+  if (!props || !("contentFit" in props)) return props;
+  const { contentFit, style, ...rest } = props;
+  return {
+    ...rest,
+    style: { ...StyleSheet.flatten(style), objectFit: contentFit },
+  };
 }

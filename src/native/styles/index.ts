@@ -55,52 +55,21 @@ function hasNonOverlappingProperties(
 }
 
 /**
- * Flattens a style array into a single object when possible, with rightmost values taking precedence.
- * Returns the original array if it contains any non-plain objects, arrays, or CSS variable objects.
- *
- * Note: This function assumes the input array has already been filtered (e.g., by filterCssVariables),
- * so empty arrays should not reach this function. If they do, they will be treated as non-flattenable.
- *
- * @param styleArray - The style array to potentially flatten
- * @returns A single merged object if all items are plain objects, otherwise the original array
- */
-function flattenStyleArray(styleArray: any[]): any {
-  // Check if we can flatten to a single object (all items are plain objects)
-  for (const item of styleArray) {
-    // Use explicit null check instead of !item to allow falsy values like 0 or false
-    if (
-      item == null ||
-      typeof item !== "object" ||
-      Array.isArray(item) ||
-      Object.prototype.hasOwnProperty.call(item, VAR_SYMBOL)
-    ) {
-      return styleArray;
-    }
-  }
-
-  // Use reduce to avoid spread operator performance issues with large arrays
-  return styleArray.reduce((acc, item) => Object.assign(acc, item), {});
-}
-
-/**
  * Recursively filters out CSS variable objects (with VAR_SYMBOL) from style values.
  * This prevents CSS variable runtime objects from leaking into React Native component props.
  *
  * @param value - The value to filter (can be any type: object, array, primitive, etc.)
  * @param depth - Internal recursion depth counter to prevent stack overflow (max 100)
- * @returns The filtered value with CSS variables removed, or `undefined` if the entire value
- *          should be filtered out (e.g., empty arrays, objects with only VAR_SYMBOL properties)
+ * @returns The value with CSS variables removed, or `undefined` if the entire value should be filtered out
  *
  * Filtering behavior:
  * - Objects with VAR_SYMBOL property: returns `undefined` (completely filtered)
- * - Arrays: filters out VAR_SYMBOL objects, returns `undefined` if empty after filtering
- * - Objects: recursively filters properties, returns `undefined` if no properties remain
- * - Primitives (null, undefined, numbers, strings, booleans): returned as-is
- * - Symbol properties: intentionally filtered out for React Native compatibility
- * - Values with nothing to filter are returned as-is, not copied. `undefined` values and
- *   empty arrays still count as filtered, so they never override className styles.
- * - Objects with non-enumerable own properties (Reanimated's animated style handle) are
- *   returned as-is: they are identified by reference and hold no CSS variables.
+ * - A value holding no CSS variable comes back as the same object, uncopied, so an animated style keeps its identity
+ * - A value holding some comes back copied without them, or `undefined` if nothing remains
+ * - Class instances (e.g. an Animated.Value) and primitives: returned as-is
+ * - A top-level style object with no string keys (`{}`, or only Symbol keys): returns `undefined`
+ * - `undefined` values and empty arrays count as filtered, so they never override className styles
+ * - Objects with non-enumerable own properties (Reanimated's animated style handle) are returned as-is
  *
  * @example
  * filterCssVariables({fontSize: 16, color: {[VAR_SYMBOL]: true}}) // {fontSize: 16}
@@ -109,84 +78,76 @@ function flattenStyleArray(styleArray: any[]): any {
  */
 function filterCssVariables(value: any, depth = 0): any | undefined {
   // Prevent stack overflow on deeply nested structures
-  if (depth > 100) {
+  if (depth > 100 || typeof value !== "object" || value === null) {
     return value;
   }
 
-  if (value === null || value === undefined) {
-    return value;
-  }
-
+  // Nothing is copied until a CSS variable is found, so an inline style keeps its identity, as an animated style's handle needs
   if (Array.isArray(value)) {
-    // Single-pass filter with map operation
-    const filtered: any[] = [];
-    let changed = false;
-
-    for (const item of value) {
-      const filteredItem = filterCssVariables(item, depth + 1);
-      if (
-        filteredItem !== undefined &&
-        !(
-          typeof filteredItem === "object" &&
-          filteredItem !== null &&
-          Object.prototype.hasOwnProperty.call(filteredItem, VAR_SYMBOL)
-        )
-      ) {
-        filtered.push(filteredItem);
-        if (filteredItem !== item) changed = true;
-      } else {
-        changed = true;
+    let filtered: any[] | undefined;
+    for (let index = 0; index < value.length; index++) {
+      const item = value[index];
+      const kept = filterCssVariables(item, depth + 1);
+      // No copy yet: skip unchanged items, then copy them all with the slice once one changes
+      if (filtered === undefined) {
+        if (kept === item && kept !== undefined) continue;
+        filtered = value.slice(0, index);
       }
+      if (kept !== undefined) filtered.push(kept);
     }
-
-    if (filtered.length === 0) return undefined;
-    return changed ? filtered : value;
+    if (filtered === undefined) return value.length > 0 ? value : undefined;
+    return filtered.length > 0 ? filtered : undefined;
   }
 
-  if (typeof value === "object") {
-    // If the object itself has VAR_SYMBOL, filter it out (check own property only)
-    if (Object.prototype.hasOwnProperty.call(value, VAR_SYMBOL)) {
-      return undefined;
-    }
-
-    // Reanimated's animated style handle is identified by reference and carries a
-    // non-enumerable member (`styleUpdaterContainer`) that a copy would lose.
-    if (
-      Object.getOwnPropertyNames(value).length !== Object.keys(value).length
-    ) {
-      return value;
-    }
-
-    // Otherwise, filter VAR_SYMBOL properties from nested objects
-    const filtered: Record<string, any> = {};
-    let hasProperties = false;
-    let changed = Object.getOwnPropertySymbols(value).length > 0;
-
-    // Use Object.keys to only iterate own string properties (not inherited, not Symbols)
-    // This intentionally filters out Symbol properties for React Native compatibility
-    for (const key of Object.keys(value)) {
-      const original = value[key];
-      const filteredValue = filterCssVariables(original, depth + 1);
-      if (filteredValue !== undefined) {
-        filtered[key] = filteredValue;
-        hasProperties = true;
-      }
-      // A dropped `undefined` counts as a change: kept, it would override the className value.
-      if (filteredValue !== original || filteredValue === undefined) {
-        changed = true;
-      }
-    }
-
-    if (!hasProperties) return undefined;
-    return changed ? filtered : value;
+  // If the object itself has VAR_SYMBOL, filter it out (check own property only)
+  if (Object.prototype.hasOwnProperty.call(value, VAR_SYMBOL)) {
+    return undefined;
   }
 
-  return value;
+  // A class instance, such as an Animated.Value, passes as it is: a plain copy detaches it from its animation
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return value;
+  }
+
+  // Object.keys only iterates own string properties, so Symbol properties are left out of a copy
+  const keys = Object.keys(value);
+
+  // Reanimated's animated style handle is identified by reference and carries a non-enumerable member (`styleUpdaterContainer`) that a copy would lose
+  if (Object.getOwnPropertyNames(value).length !== keys.length) {
+    return value;
+  }
+
+  let filtered: Record<string, any> | undefined;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index] as string;
+    const item = value[key];
+    const kept = filterCssVariables(item, depth + 1);
+    // No copy yet: skip unchanged keys, then copy them all below once one changes
+    if (filtered === undefined) {
+      if (kept === item && kept !== undefined) continue;
+      // Objects have no slice: copy the unchanged keys before this one, performantly / avoiding allocations
+      filtered = {};
+      for (let earlier = 0; earlier < index; earlier++) {
+        const earlierKey = keys[earlier] as string;
+        filtered[earlierKey] = value[earlierKey];
+      }
+    }
+    if (kept !== undefined) filtered[key] = kept;
+  }
+
+  // A style object with no string keys, such as {}, adds nothing, as before
+  if (filtered === undefined) {
+    return depth === 0 && keys.length === 0 ? undefined : value;
+  }
+
+  for (const _ in filtered) return filtered;
+  return undefined;
 }
 
 export const stylesFamily = family(
   (
-    hash: string,
+    hash: number,
     rules: Set<StyleRule | InlineVariable | VariableContextValue>,
   ) => {
     const sortedRules = Array.from(rules).sort(specificityCompareFn);
@@ -196,9 +157,10 @@ export const stylesFamily = family(
     /**
      * A family is a map, so we need to cleanup the observers when the the hash is no longer used
      */
+    const unsubscribe = obs.unsubscribe;
     return Object.assign(obs, {
-      cleanup: (effect: Effect) => {
-        obs.observers.delete(effect);
+      unsubscribe: (effect: Effect) => {
+        unsubscribe(effect);
         if (obs.observers.size === 0) {
           stylesFamily.delete(hash);
         }
@@ -210,29 +172,23 @@ export const stylesFamily = family(
 export function getStyledProps(
   state: ComponentState,
   inline: Record<string, any> | undefined | null,
+  adaptProps: (
+    props: Record<string, any> | undefined,
+  ) => Record<string, any> | undefined = (props) => props,
 ) {
   let result: Record<string, any> | undefined;
 
   const styledProps = state.stylesObs?.get(state.styleEffect);
 
-  // When multiple configs exist (e.g. ScrollView with className→style and
-  // contentContainerClassName→contentContainerStyle), each iteration of
-  // deepMergeConfig produces a full props object via Object.assign({}, left, right).
-  // Later iterations overwrite earlier ones' correctly-merged target props.
-  // We save each iteration's target value and restore them after the loop.
-  //
-  // Note: This uses the leaf key of config.target for storage/restoration.
-  // For nested array targets (length > 1), the leaf key is stored at the
-  // top level, which is correct because deepMergeConfig already builds the
-  // nested structure. If two configs ever share the same leaf key, the last
-  // one wins — but no built-in component mapping produces this scenario.
-  const computedTargets: Record<string, any> = {};
+  // Each config merges a complete props object. Preserve its full target path
+  // before the next config merges unrelated inline props over that object.
+  const computedTargets: { path: string[]; value: unknown }[] = [];
   const consumedSources: string[] = [];
 
   for (const config of state.configs) {
     result = deepMergeConfig(
       config,
-      nativeStyleMapping(config, styledProps?.normal),
+      nativeStyleMapping(config, adaptProps(styledProps?.normal)),
       inline,
       true,
     );
@@ -241,17 +197,19 @@ export function getStyledProps(
       result = deepMergeConfig(
         config,
         result,
-        nativeStyleMapping(config, styledProps.important),
+        nativeStyleMapping(config, adaptProps(styledProps.important)),
       );
     }
 
-    // Save the correctly-merged target prop from this iteration
     if (result && config.target) {
-      const targetKey = Array.isArray(config.target)
-        ? config.target[config.target.length - 1]
-        : config.target;
-      if (targetKey && targetKey in result) {
-        computedTargets[targetKey] = result[targetKey];
+      const path = Array.isArray(config.target)
+        ? config.target
+        : [config.target];
+      let target = result;
+      for (const key of path.slice(0, -1)) target = target?.[key];
+      const key = path[path.length - 1];
+      if (target && key && key in target) {
+        computedTargets.push({ path, value: target[key] });
       }
     }
 
@@ -321,66 +279,22 @@ export function getStyledProps(
   // Restore correctly-merged target props that may have been overwritten
   // by later config iterations' Object.assign({}, left, right)
   if (result) {
-    for (const key in computedTargets) {
-      result[key] = computedTargets[key];
+    for (const { path, value } of computedTargets) {
+      let target = result;
+      for (const key of path.slice(0, -1)) {
+        const existing = target[key];
+        target = target[key] = Array.isArray(existing)
+          ? [...existing]
+          : { ...existing };
+      }
+      target[path[path.length - 1]!] = value;
     }
     for (const source of consumedSources) {
       delete result[source];
     }
-    if (result.style !== undefined) {
-      result.style = expandLogicalPadding(result.style);
-    }
   }
 
   return result;
-}
-
-/**
- * Android's Fabric TextInput ignores logical padding (`paddingBlock` / `paddingInline`): the
- * value is dropped and the EditText theme default (~21dp) stays, so `py-2` measures 42.67dp
- * instead of 35.81dp on a real device. Tailwind compiles `py-*` / `px-*` to exactly those
- * logical properties, so effectively every text input is affected.
- *
- * Rewriting call sites to `pt-*` / `pb-*` is not an option — a Tailwind class sorter collapses
- * them back to `py-*`. Convert to physical properties here, once className resolution is done.
- * Existing physical values win, so an explicit `paddingTop` is never overwritten.
- */
-function expandLogicalPadding(style: unknown): unknown {
-  if (!style || typeof style !== "object") {
-    return style;
-  }
-
-  if (Array.isArray(style)) {
-    let changed = false;
-    const next = style.map((entry) => {
-      const expanded = expandLogicalPadding(entry);
-      if (expanded !== entry) {
-        changed = true;
-      }
-      return expanded;
-    });
-    return changed ? next : style;
-  }
-
-  const { paddingBlock, paddingInline } = style as Record<string, unknown>;
-  if (paddingBlock === undefined && paddingInline === undefined) {
-    return style;
-  }
-
-  const next: Record<string, unknown> = { ...style };
-  delete next.paddingBlock;
-  delete next.paddingInline;
-
-  if (paddingBlock !== undefined) {
-    next.paddingTop ??= paddingBlock;
-    next.paddingBottom ??= paddingBlock;
-  }
-  if (paddingInline !== undefined) {
-    next.paddingLeft ??= paddingInline;
-    next.paddingRight ??= paddingInline;
-  }
-
-  return next;
 }
 
 /**
@@ -427,6 +341,20 @@ function mergeDefinedProps(
   return result;
 }
 
+type StyleCallback = (state: unknown) => unknown;
+
+function isStyleCallback(value: unknown): value is StyleCallback {
+  return typeof value === "function";
+}
+
+// Pressable calls a function style with its pressed state, so a merge keeps a callback a callback
+function composeStyleCallback(left: unknown, right: unknown): StyleCallback {
+  return (state) => [
+    isStyleCallback(left) ? left(state) : left,
+    isStyleCallback(right) ? right(state) : right,
+  ];
+}
+
 function deepMergeConfig(
   config: Config,
   left: Record<string, any> | undefined,
@@ -440,86 +368,37 @@ function deepMergeConfig(
   // Handle style merging to support both className and inline style props
   let result: Record<string, any>;
   if (config.target) {
-    // `mappingToConfig` collapses a length-1 target to a bare string, so the object-form
-    // mappings (TextInput, ActivityIndicator, ImageBackground, KeyboardAvoidingView) and the
-    // default config arrive here as `"style"`, not `["style"]`. They need the same merge as
-    // the shorthand form — otherwise `mergeDefinedProps` lets the inline style prop replace
-    // the className-computed style outright.
     if (
-      config.target === "style" ||
-      (Array.isArray(config.target) &&
-        config.target.length === 1 &&
-        config.target[0] === "style")
+      Array.isArray(config.target) &&
+      config.target.length === 1 &&
+      config.target[0] === "style"
     ) {
       // Special handling for style target when we have inline styles
-      result = { ...left, ...right };
+      result = mergeDefinedProps(left, right);
 
       // Handle null/undefined inline styles
       if (right?.style === null || right?.style === undefined) {
         if (left?.style) {
           result.style = left.style;
         }
-      } else if (rightIsInline && right?.style) {
-        // Filter inline styles if rightIsInline is true
-        const filteredRightStyle = filterCssVariables(right.style);
-
-        if (left?.style) {
-          if (!filteredRightStyle) {
-            // All inline styles were CSS variables, only use left
-            result.style = left.style;
-          } else {
-            const leftStyle = left.style;
-
-            // For arrays or objects, check if we need to create a style array
-            const leftIsObject =
-              typeof leftStyle === "object" && !Array.isArray(leftStyle);
-            const rightIsObject =
-              typeof filteredRightStyle === "object" &&
-              !Array.isArray(filteredRightStyle);
-
-            if (leftIsObject && rightIsObject) {
-              if (hasNonOverlappingProperties(leftStyle, filteredRightStyle)) {
-                result.style = [leftStyle, filteredRightStyle];
-              } else {
-                // All left properties are in right, right overrides
-                result.style = filteredRightStyle;
-              }
-            } else {
-              // One or both are arrays, merge them
-              result.style = [leftStyle, filteredRightStyle];
-            }
-          }
-        } else {
-          // No left style, just use filtered right
-          if (filteredRightStyle) {
-            result.style = filteredRightStyle;
-          } else {
-            // All filtered out, remove style prop
-            delete result.style;
-          }
-        }
       } else if (!rightIsInline && right?.style) {
         // Merging non-inline styles (e.g., important styles)
         if (left?.style) {
-          // If left.style is an array, append right.style
-          if (Array.isArray(left.style)) {
-            const combined = [...left.style, right.style];
-            result.style = flattenStyleArray(combined);
+          if (isStyleCallback(left.style) || isStyleCallback(right.style)) {
+            result.style = composeStyleCallback(left.style, right.style);
           } else if (
             typeof left.style === "object" &&
-            typeof right.style === "object"
+            !Array.isArray(left.style) &&
+            typeof right.style === "object" &&
+            !hasNonOverlappingProperties(left.style, right.style)
           ) {
-            // Both are objects, check for overlaps
-            if (hasNonOverlappingProperties(left.style, right.style)) {
-              result.style = flattenStyleArray([left.style, right.style]);
-            } else {
-              // All left properties are overridden by right
-              result.style = right.style;
-            }
+            // All left properties are overridden by right
+            result.style = right.style;
           } else {
-            // One or both are arrays/mixed types
-            const combined = [left.style, right.style];
-            result.style = flattenStyleArray(combined);
+            // Layered rather than flattened: a copy would merge an inline animated style's handle into a plain object
+            result.style = Array.isArray(left.style)
+              ? [...left.style, right.style]
+              : [left.style, right.style];
           }
         }
       }
@@ -543,15 +422,10 @@ function deepMergeConfig(
    *  If target is a path, deep merge until we get to the last key
    */
   if (Array.isArray(config.target)) {
-    for (let i = 0; i < config.target.length - 1; i++) {
-      const key = config.target[i];
-
-      if (key === undefined) {
-        return result;
-      }
-
+    if (config.target.length > 1) {
+      const key = config.target[0]!;
       result[key] = deepMergeConfig(
-        { source: config.source, target: config.target.slice(i + 1) },
+        { source: config.source, target: config.target.slice(1) },
         left?.[key],
         right?.[key],
         rightIsInline,
@@ -585,7 +459,9 @@ function deepMergeConfig(
           typeof rightValue === "object" &&
           rightValue !== null &&
           !Array.isArray(rightValue);
-        if (leftIsObj && rightIsObj) {
+        if (isStyleCallback(leftValue) || isStyleCallback(rightValue)) {
+          result[finalKey] = composeStyleCallback(leftValue, rightValue);
+        } else if (leftIsObj && rightIsObj) {
           if (hasNonOverlappingProperties(leftValue, rightValue)) {
             result[finalKey] = [leftValue, rightValue];
           } else {
@@ -599,6 +475,20 @@ function deepMergeConfig(
         // No left value — use filtered right value (not the unfiltered one from mergeDefinedProps)
         result[finalKey] = rightValue;
       }
+    } else if (
+      config.target.length === 1 &&
+      finalKey &&
+      finalKey !== "style" &&
+      left?.[finalKey] !== undefined &&
+      right[finalKey] !== undefined
+    ) {
+      // An !important value layers over the class's and the inline value rather than replacing both
+      const leftValue = left[finalKey];
+      const rightValue = right[finalKey];
+      result[finalKey] =
+        isStyleCallback(leftValue) || isStyleCallback(rightValue)
+          ? composeStyleCallback(leftValue, rightValue)
+          : [leftValue, rightValue];
     }
 
     return result;
@@ -617,9 +507,22 @@ function deepMergeConfig(
     rightValue = filterCssVariables(rightValue);
   }
 
-  if (rightValue !== undefined) {
-    result[target] =
-      left && target in left ? [left[target], rightValue] : rightValue;
+  if (rightValue === undefined && rightIsInline && target in right) {
+    // An inline value that held only CSS variables leaves the class's, and never reaches the component itself
+    if (left && target in left) {
+      result[target] = left[target];
+    } else {
+      delete result[target];
+    }
+  } else if (rightValue !== undefined) {
+    if (left && target in left) {
+      result[target] =
+        isStyleCallback(left[target]) || isStyleCallback(rightValue)
+          ? composeStyleCallback(left[target], rightValue)
+          : [left[target], rightValue];
+    } else {
+      result[target] = rightValue;
+    }
   }
 
   return result;
@@ -629,7 +532,11 @@ function nativeStyleMapping(
   config: Config,
   props: Record<string, any> | undefined,
 ) {
-  if (!config.nativeStyleMapping || !props) {
+  if (!props) {
+    return props;
+  }
+  if (!config.nativeStyleMapping) {
+    if (config.target === false) delete props.style;
     return props;
   }
 
@@ -678,5 +585,6 @@ function nativeStyleMapping(
     target[lastToken!] = styleValue;
   }
 
+  if (config.target === false) delete props.style;
   return props;
 }

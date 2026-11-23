@@ -35,18 +35,22 @@ describe("Border - Border Width", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          borderInlineWidth: 1,
-          borderInlineStyle: "solid",
+          borderStartWidth: 1,
+          borderEndWidth: 1,
         },
       },
     });
   });
+  // The block-axis twin of border-x-1 above. React Native reads no
+  // borderBlockWidth on Android or the old architecture and no per-edge
+  // border style anywhere, so both keys this used to assert were inert and
+  // the utility painted nothing.
   test("border-y-1", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          borderBlockWidth: 1,
-          borderBlockStyle: "solid",
+          borderTopWidth: 1,
+          borderBottomWidth: 1,
         },
       },
     });
@@ -54,14 +58,14 @@ describe("Border - Border Width", () => {
   test("border-s-1", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
-        style: { borderInlineStartWidth: 1, borderInlineStartStyle: "solid" },
+        style: { borderStartWidth: 1 },
       },
     });
   });
   test("border-e-1", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
-        style: { borderInlineEndWidth: 1, borderInlineEndStyle: "solid" },
+        style: { borderEndWidth: 1 },
       },
     });
   });
@@ -98,8 +102,8 @@ describe("Border - Border Width", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          borderInlineWidth: 2,
-          borderInlineStyle: "solid",
+          borderStartWidth: 2,
+          borderEndWidth: 2,
         },
       },
     });
@@ -108,8 +112,8 @@ describe("Border - Border Width", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          borderBlockWidth: 2,
-          borderBlockStyle: "solid",
+          borderTopWidth: 2,
+          borderBottomWidth: 2,
         },
       },
     });
@@ -117,14 +121,14 @@ describe("Border - Border Width", () => {
   test("border-s-2", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
-        style: { borderInlineStartWidth: 2, borderInlineStartStyle: "solid" },
+        style: { borderStartWidth: 2 },
       },
     });
   });
   test("border-e-2", async () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
-        style: { borderInlineEndWidth: 2, borderInlineEndStyle: "solid" },
+        style: { borderEndWidth: 2 },
       },
     });
   });
@@ -160,7 +164,8 @@ describe("Border - Border Color", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          borderInlineColor: "#fff",
+          borderStartColor: "#fff",
+          borderEndColor: "#fff",
         },
       },
     });
@@ -169,7 +174,8 @@ describe("Border - Border Color", () => {
     expect(await renderCurrentTest()).toStrictEqual({
       props: {
         style: {
-          borderBlockColor: "#fff",
+          borderTopColor: "#fff",
+          borderBottomColor: "#fff",
         },
       },
     });
@@ -219,8 +225,8 @@ describe("Border - Border Color", () => {
     ).toStrictEqual({
       props: {
         style: {
-          borderLeftColor: "#fb2c36",
-          borderRightColor: "#fb2c36",
+          borderStartColor: "#fb2c36",
+          borderEndColor: "#fb2c36",
           color: "#fb2c36",
         },
       },
@@ -233,6 +239,25 @@ describe("Border - Border Color", () => {
       warnings: {
         values: {
           "border-inline-color": "inherit",
+        },
+      },
+    });
+  });
+
+  // An arbitrary var() Tailwind cannot fold at build time (unlike --spacing)
+  // keeps `border-inline-color` on the compiler's unparsed path. Two
+  // definitions keep it off the single-definition inliner as well.
+  test("border-x-[color:var(--c)]", async () => {
+    expect(
+      await renderSimple({
+        className: "border-x-[color:var(--c)]",
+        extraCss: `:root { --c: red; } .redefine { --c: blue; }`,
+      }),
+    ).toStrictEqual({
+      props: {
+        style: {
+          borderStartColor: "red",
+          borderEndColor: "red",
         },
       },
     });
